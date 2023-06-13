@@ -6,7 +6,7 @@
 
 <br />
 <p align="center">
-  <img src="https://www.tools4ever.nl/connector-logos/dormakaba-logo.png">
+  <img src="https://www.tools4ever.nl/connector-logos/dormakaba-logo.png" width="500">
 </p> 
 
 ## Table of contents
