@@ -1,25 +1,13 @@
-#####################################################
+##################################################
 # HelloID-Conn-Prov-Target-DormakabaExos-Disable
-#
-# Version: 1.0.0
-#####################################################
-# Initialize default values
-$config = $configuration | ConvertFrom-Json
-$p = $person | ConvertFrom-Json
-$aRef = $AccountReference | ConvertFrom-Json
-$success = $false
-$auditLogs = [System.Collections.Generic.List[PSCustomObject]]::new()
+# PowerShell V2
+##################################################
 
 # Enable TLS1.2
 [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor [System.Net.SecurityProtocolType]::Tls12
 
-# Set debug logging
-switch ($($config.IsDebug)) {
-    $true { $VerbosePreference = 'Continue' }
-    $false { $VerbosePreference = 'SilentlyContinue' }
-}
-
 #region functions
+
 function Get-AuthorizationHeaders {
     [CmdletBinding()]
     param (
@@ -60,97 +48,156 @@ function Get-AuthorizationHeaders {
         $PSCmdlet.ThrowTerminatingError($_)
     }
 }
-#endregion functions
+function Resolve-DormakabaExosError {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory)]
+        [object]
+        $ErrorObject
+    )
+    process {
+        $httpErrorObj = [PSCustomObject]@{
+            ScriptLineNumber = $ErrorObject.InvocationInfo.ScriptLineNumber
+            Line             = $ErrorObject.InvocationInfo.Line
+            ErrorDetails     = $ErrorObject.Exception.Message
+            FriendlyMessage  = $ErrorObject.Exception.Message
+        }
+        if (-not [string]::IsNullOrEmpty($ErrorObject.ErrorDetails.Message)) {
+            $httpErrorObj.ErrorDetails = $ErrorObject.ErrorDetails.Message
+        } elseif ($ErrorObject.Exception.GetType().FullName -eq 'System.Net.WebException') {
+            if ($null -ne $ErrorObject.Exception.Response) {
+                $streamReaderResponse = [System.IO.StreamReader]::new($ErrorObject.Exception.Response.GetResponseStream()).ReadToEnd()
+                if (-not [string]::IsNullOrEmpty($streamReaderResponse)) {
+                    $httpErrorObj.ErrorDetails = $streamReaderResponse
+                }
+            }
+        }
+        try {
+            $errorDetailsObject = ($httpErrorObj.ErrorDetails | ConvertFrom-Json)
+            # Make sure to inspect the error result object and add only the error message as a FriendlyMessage.
+            # $httpErrorObj.FriendlyMessage = $errorDetailsObject.message
+            $httpErrorObj.FriendlyMessage = $httpErrorObj.ErrorDetails # Temporarily assignment
+        } catch {
+            $httpErrorObj.FriendlyMessage = $httpErrorObj.ErrorDetails
+        }
+        Write-Output $httpErrorObj
+    }
+}
+#endregion
 
 try {
-    # Add an auditMessage showing what will happen during enforcement
-    if ($dryRun -eq $true) {
-        $auditLogs.Add([PSCustomObject]@{
-                Message = "Disable DormakabaExos account for: [$($p.DisplayName)] will be executed during enforcement"
-            })
+    # Verify if [aRef] has a value
+    if ([string]::IsNullOrEmpty($($actionContext.References.Account))) {
+        throw 'The account reference could not be found'
     }
 
-    if (-not($dryRun -eq $true)) {
-        Write-Verbose "Disabling DormakabaExos account with accountReference: [$aRef]"
-        $splatAuthHeaders = @{
-            Username = $config.UserName
-            Password = $config.Password
-            BaseUrl  = $config.BaseUrl
-        }
-        $headers = Get-AuthorizationHeaders @splatAuthHeaders
+    Write-Information 'Verifying if a DormakabaExos account exists'
 
-        $splatRestMethod = @{
-            Uri     = "$($Config.BaseUrl)/ExosApi/api/v1.0/persons/$($aRef)/block"
-            Method  = 'Post'
-            Headers = $headers
-            body    = @{ Reason = 'Automated HelloId Provisioing' } | ConvertTo-Json
-        }
-        try {
-            $null = Invoke-RestMethod @splatRestMethod -Verbose:$false
-        } catch {
-            if ($_.ErrorDetails.message -notmatch 'Person can not be blocked as it has already been blocked') {
-                throw $_
-            }
-        }
+    $splatAuthHeaders = @{
+        Username = $actionContext.Configuration.UserName
+        Password = $actionContext.Configuration.Password
+        BaseUrl  = $actionContext.Configuration.BaseUrl
+    }
 
-        Write-Verbose 'Verify if the account has badges assigned.'
-        $splatGetPersons = @{
-            Uri     = "$($Config.BaseUrl)/ExosApi/api/v1.0/persons?`$filter=(PersonBaseData/PersonId eq '$($Aref)')&`$expand=Badge(`$select=badgename)"
-            Method  = 'GET'
-            Headers = $headers
-        }
-        $responseUser = (Invoke-RestMethod @splatGetPersons -Verbose:$false).value[0]
+    $Autorizationheaders = Get-AuthorizationHeaders @splatAuthHeaders
 
-        if ($responseUser.Badge.badgeName.count -eq 0) {
-            Write-Verbose "No Badges were assigned to [$($Aref)]"
-        } else {
-            foreach ($badge in $responseUser.Badge) {
-                Write-Verbose "Unassign Badge [$($badge.BadgeName)]"
+    $splatGetPersons = @{
+        Uri     = "$($actionContext.Configuration.BaseUrl)/ExosApi/api/v1.0/persons?`$filter=(PersonBaseData/PersonId eq '$($actionContext.References.Account)')"
+        Method  = 'GET'
+        Headers = $Autorizationheaders
+    }
+    $correlatedAccount = (Invoke-RestMethod @splatGetPersons -Verbose:$false).value[0]
+
+    if ($null -ne $correlatedAccount) {
+        $action = 'DisableAccount'
+    } else {
+        $action = 'NotFound'
+    }
+
+    # Process
+    switch ($action) {
+        'DisableAccount' {
+            if (-not($actionContext.DryRun -eq $true)) {
+                Write-Information "Disabling DormakabaExos account with accountReference: [$($actionContext.References.Account)]"
 
                 $splatRestMethod = @{
-                    Uri     = "$($Config.BaseUrl)/ExosApi/api/v1.0/persons/$($aRef)/unassignBadge"  # Odata Query
+                    Uri     = "$($actionContext.Configuration.BaseUrl)/ExosApi/api/v1.0/persons/$($actionContext.References.Account)/block"
                     Method  = 'Post'
-                    Headers = $headers
-                    body    = @{ BadgeName = $badge.BadgeName } | ConvertTo-Json
+                    Headers = $Autorizationheaders
+                    body    = @{ Reason = 'Automated HelloId Provisioing' } | ConvertTo-Json
                 }
-                $null = Invoke-RestMethod @splatRestMethod -Verbose:$false
-                $auditLogs.Add([PSCustomObject]@{
-                        Message = "Unassign Badge [$($badge.BadgeName)] was successful"
-                        IsError = $false
-                    })
+                try {
+                    $null = Invoke-RestMethod @splatRestMethod -Verbose:$false
+                } catch {
+                    if ($_.ErrorDetails.message -notmatch 'Person can not be blocked as it has already been blocked') {
+                        throw $_
+                    }
+                }
+
+                Write-Information 'Check the badges assigned to the account (if any), and unassign these'
+                $splatGetPersons = @{
+                    Uri     = "$($actionContext.Configuration.BaseUrl)/ExosApi/api/v1.0/persons?`$filter=(PersonBaseData/PersonId eq '$($actionContext.References.Account)')&`$expand=Badge(`$select=badgename)"
+                    Method  = 'GET'
+                    Headers = $headers
+                }
+                $responseUser = (Invoke-RestMethod @splatGetPersons -Verbose:$false).value[0]
+
+                if ($responseUser.Badge.badgeName.count -eq 0) {
+                    Write-information "No Badges were assigned to [$($Aref)]"
+                } else {
+                    foreach ($badge in $responseUser.Badge) {
+                        Write-Information "Unassigning Badge [$($badge.BadgeName)]"
+
+                        $splatRestMethod = @{
+                            Uri     = "$($Config.BaseUrl)/ExosApi/api/v1.0/persons/$($actionContext.References.Account)/unassignBadge"
+                            Method  = 'Post'
+                            Headers = $headers
+                            body    = @{ BadgeName = $badge.BadgeName } | ConvertTo-Json
+                        }
+                        $null = Invoke-RestMethod @splatRestMethod -Verbose:$false
+                        $outputContext.AuditLogs.Add([PSCustomObject]@{
+                                Message = "Unassign Badge [$($badge.BadgeName)] was successful"
+                                IsError = $false
+                            })
+                    }
+                }
+
+            } else {
+                Write-Information "[DryRun] Disable DormakabaExos account with accountReference: [$($actionContext.References.Account)], will be executed during enforcement"
             }
+
+            $outputContext.Success = $true
+            $outputContext.AuditLogs.Add([PSCustomObject]@{
+                    Message = 'Disable account was successful'
+                    IsError = $false
+                })
+            break
         }
-        $success = $true
-        $auditLogs.Add([PSCustomObject]@{
-                Message = 'Disable account was successful'
-                IsError = $false
-            })
+
+        'NotFound' {
+            Write-Information "DormakabaExos account: [$($actionContext.References.Account)] could not be found, possibly indicating that it could be deleted"
+            $outputContext.Success = $true
+            $outputContext.AuditLogs.Add([PSCustomObject]@{
+                    Message = "DormakabaExos account: [$($actionContext.References.Account)] could not be found, possibly indicating that it could be deleted"
+                    IsError = $false
+                })
+            break
+        }
     }
 } catch {
-    $errorMessage = "Could not update DormakabaExos account. Error: $($_.Exception.Message)  $($_.ErrorDetails.message)"
-    Write-Verbose $errorMessage -Verbose
-    $auditLogs.Add([PSCustomObject]@{
-            Message = $errorMessage
-            IsError = $true
-        })
-} finally {
-    if ($null -ne $headers) {
-        Write-Verbose 'logout'
-        $splatLogOut = @{
-            Uri     = "$($Config.BaseUrl)/ExosApi/api/v1.0/logins/logoutMyself"
-            Method  = 'POST'
-            Headers = $headers
-        }
-        try {
-            $null = Invoke-RestMethod @splatLogOut -Verbose:$false
-        } catch {
-            Write-Verbose "Warning LogoutMyself Failed, $($_.Exception.Message)  $($_.ErrorDetails.message)".trim(' ') -Verbose
-        }
+    $outputContext.success = $false
+    $ex = $PSItem
+    if ($($ex.Exception.GetType().FullName -eq 'Microsoft.PowerShell.Commands.HttpResponseException') -or
+        $($ex.Exception.GetType().FullName -eq 'System.Net.WebException')) {
+        $errorObj = Resolve-DormakabaExosError -ErrorObject $ex
+        $auditMessage = "Could not disable DormakabaExos account. Error: $($errorObj.FriendlyMessage)"
+        Write-Warning "Error at Line '$($errorObj.ScriptLineNumber)': $($errorObj.Line). Error: $($errorObj.ErrorDetails)"
+    } else {
+        $auditMessage = "Could not disable DormakabaExos account. Error: $($_.Exception.Message)"
+        Write-Warning "Error at Line '$($ex.InvocationInfo.ScriptLineNumber)': $($ex.InvocationInfo.Line). Error: $($ex.Exception.Message)"
     }
-
-    $result = [PSCustomObject]@{
-        Success   = $success
-        Auditlogs = $auditLogs
-    }
-    Write-Output $result | ConvertTo-Json -Depth 10
+    $outputContext.AuditLogs.Add([PSCustomObject]@{
+        Message = $auditMessage
+        IsError = $true
+    })
 }
