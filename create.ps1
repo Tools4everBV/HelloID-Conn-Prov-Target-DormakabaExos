@@ -1,35 +1,10 @@
-#####################################################
+#################################################
 # HelloID-Conn-Prov-Target-DormakabaExos-Create
-#
-# Version: 1.0.0
-#####################################################
-# Initialize default values
-$config = $configuration | ConvertFrom-Json
-$p = $person | ConvertFrom-Json
-$success = $false
-$auditLogs = [System.Collections.Generic.List[PSCustomObject]]::new()
-
-# Account mapping
-$account = [PSCustomObject]@{
-    PersonBaseData = @{
-        PersonalNumber = $p.ExternalId
-        FirstName      = $p.Name.GivenName
-        LastName       = "$($p.Name.FamilyNamePrefix) $($p.Name.FamilyName)".trim(' ')
-        EMail          = $p.Accounts.MicrosoftActiveDirectory.mail
-    }
-}
+# PowerShell V2
+#################################################
 
 # Enable TLS1.2
 [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor [System.Net.SecurityProtocolType]::Tls12
-
-# Set debug logging
-switch ($($config.IsDebug)) {
-    $true { $VerbosePreference = 'Continue' }
-    $false { $VerbosePreference = 'SilentlyContinue' }
-}
-
-# Set to true if accounts in the target system must be updated
-$updatePerson = $false
 
 #region functions
 function Get-AuthorizationHeaders {
@@ -72,61 +47,110 @@ function Get-AuthorizationHeaders {
         $PSCmdlet.ThrowTerminatingError($_)
     }
 }
-#endregion functions
 
-# Begin
+function Resolve-DormakabaExosError {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory)]
+        [object]
+        $ErrorObject
+    )
+    process {
+        $httpErrorObj = [PSCustomObject]@{
+            ScriptLineNumber = $ErrorObject.InvocationInfo.ScriptLineNumber
+            Line             = $ErrorObject.InvocationInfo.Line
+            ErrorDetails     = $ErrorObject.Exception.Message
+            FriendlyMessage  = $ErrorObject.Exception.Message
+        }
+        if (-not [string]::IsNullOrEmpty($ErrorObject.ErrorDetails.Message)) {
+            $httpErrorObj.ErrorDetails = $ErrorObject.ErrorDetails.Message
+        } elseif ($ErrorObject.Exception.GetType().FullName -eq 'System.Net.WebException') {
+            if ($null -ne $ErrorObject.Exception.Response) {
+                $streamReaderResponse = [System.IO.StreamReader]::new($ErrorObject.Exception.Response.GetResponseStream()).ReadToEnd()
+                if (-not [string]::IsNullOrEmpty($streamReaderResponse)) {
+                    $httpErrorObj.ErrorDetails = $streamReaderResponse
+                }
+            }
+        }
+        try {
+            $errorDetailsObject = ($httpErrorObj.ErrorDetails | ConvertFrom-Json)
+            # Make sure to inspect the error result object and add only the error message as a FriendlyMessage.
+            # $httpErrorObj.FriendlyMessage = $errorDetailsObject.message
+            $httpErrorObj.FriendlyMessage = $httpErrorObj.ErrorDetails # Temporarily assignment
+        } catch {
+            $httpErrorObj.FriendlyMessage = $httpErrorObj.ErrorDetails
+        }
+        Write-Output $httpErrorObj
+    }
+}
+#endregion
+
 try {
-    $splatAuthHeaders = @{
-        Username = $config.UserName
-        Password = $config.Password
-        BaseUrl  = $config.BaseUrl
-    }
-    $headers = Get-AuthorizationHeaders @splatAuthHeaders
+    # Initial Assignments
+    $outputContext.AccountReference = 'Currently not available'
 
-    Write-Verbose "Get ExosUser [$($account.PersonBaseData.PersonalNumber)]"-Verbose
-    $splatGetPersons = @{
-        Uri     = "$($Config.BaseUrl)/ExosApi/api/v1.0/persons?`$filter=(PersonBaseData/PersonalNumber eq '$($account.PersonBaseData.PersonalNumber)')&`$expand=PersonBaseData(`$select=*)"
-        Method  = 'GET'
-        Headers = $headers
-    }
-    $responseUser = (Invoke-RestMethod @splatGetPersons -Verbose:$false).value[0]
+    # Validate correlation configuration
+    if ($actionContext.CorrelationConfiguration.Enabled) {
+        $correlationField = $actionContext.CorrelationConfiguration.Personfield
+        $correlationValue = $actionContext.CorrelationConfiguration.PersonFieldValue
 
-    if (-not($responseUser)) {
-        $action = 'Create-Correlate'
-    } elseif ($updatePerson -eq $true) {
-        $action = 'Update-Correlate'
+        if ([string]::IsNullOrEmpty($($correlationField))) {
+            throw 'Correlation is enabled but not configured correctly'
+        }
+        if ([string]::IsNullOrEmpty($($correlationValue))) {
+            throw 'Correlation is enabled but [PersonFieldValue] is empty. Please make sure it is correctly mapped'
+        }
+
+        # Determine if a user needs to be [created] or [correlated]
+
+        $splatAuthHeaders = @{
+            Username = $actionContext.Configuration.UserName
+            Password = $actionContext.Configuration.Password
+            BaseUrl  = $actionContext.Configuration.BaseUrl
+        }
+
+        $AutorizationHeaders = Get-AuthorizationHeaders @splatAuthHeaders
+
+        $splatGetPersons = @{
+            Uri     = "$($actionContext.Configuration.BaseUrl)/ExosApi/api/v1.0/persons?`$filter=(PersonBaseData/PersonalNumber eq '$correlationValue')&`$expand=PersonBaseData(`$select=*)"
+            Method  = 'GET'
+            Headers = $AutorizationHeaders
+        }
+        $correlatedAccount = (Invoke-RestMethod @splatGetPersons -Verbose:$false).value[0]
+
+    }
+
+    if ($null -ne $correlatedAccount) {
+        $action = 'CorrelateAccount'
     } else {
-        $action = 'Correlate'
-    }
-
-    # Add an auditMessage showing what will happen during enforcement
-    if ($dryRun -eq $true) {
-        $auditLogs.Add([PSCustomObject]@{
-                Message = "$action DormakabaExos account for: [$($p.DisplayName)], will be executed during enforcement"
-            })
+        $action = 'CreateAccount'
     }
 
     # Process
-    if (-not($dryRun -eq $true)) {
-        switch ($action) {
-            'Create-Correlate' {
-                Write-Verbose 'Creating and correlating DormakabaExos account'
-                $splatRestMethodCreate = @{
-                    Uri     = "$($Config.BaseUrl)/ExosApi/api/v1.0/persons/Create"
-                    Method  = 'Post'
-                    Headers = $headers
-                    body    = ($account | ConvertTo-Json -Depth 10)
-                }
-                $responseUser = Invoke-RestMethod @splatRestMethodCreate -Verbose:$false
-                $accountReference = $responseUser.Value.PersonId
+    switch ($action) {
+        'CreateAccount' {
+            $splatCreateParams = @{
+                Uri    = "$($actionContext.Configuration.BaseUrl)/ExosApi/api/v1.0/persons/Create"
+                Method = 'POST'
+                Headers = $AutorizationHeaders
+                Body   = $actionContext.Data | ConvertTo-Json
+            }
 
+            # Make sure to test with special characters and if needed; add utf8 encoding.
+            if (-not($actionContext.DryRun -eq $true)) {
+                Write-Information 'Creating and correlating DormakabaExos account'
+
+                $createdAccount = Invoke-RestMethod @splatCreateParams -Verbose:$false
+                $outputContext.Data = $createdAccount.Value
+                $outputContext.AccountReference = $createdAccount.Value.PersonId
 
                 # The API does not supports creating disabled accounts
+
                 $splatRestMethodDisable = @{
-                    Uri     = "$($Config.BaseUrl)/ExosApi/api/v1.0/persons/$($accountReference)/block"
+                    Uri     = "$($actionContext.Configuration.BaseUrl)/ExosApi/api/v1.0/persons/$($outputContext.AccountReference)/block"
                     Method  = 'Post'
-                    Headers = $headers
-                    body    = @{ Reason = 'Automated HelloId Provisioing' } | ConvertTo-Json
+                    Headers = $AutorizationHeaders
+                    body    = @{ Reason = 'Automated HelloID Provisioning' } | ConvertTo-Json
                 }
                 try {
                     $null = Invoke-RestMethod @splatRestMethodDisable -Verbose:$false
@@ -136,61 +160,46 @@ try {
                     }
                 }
                 break
-            }
 
-            'Update-Correlate' {
-                Write-Verbose 'Updating and correlating DormakabaExos account'
-                $splatRestMethod = @{
-                    Uri     = "$($Config.BaseUrl)/ExosApi/api/v1.0/persons/$($responseUser.PersonBaseData.PersonId)/Update"
-                    Method  = 'Post'
-                    Headers = $headers
-                    body    = ($account | ConvertTo-Json -Depth 10)
-                }
-                $responseUser = Invoke-RestMethod @splatRestMethod -Verbose:$false
-                $accountReference = $responseUser.Value.PersonId
-                break
-            }
 
-            'Correlate' {
-                Write-Verbose 'Correlating DormakabaExos account'
-                $accountReference = $responseUser.PersonBaseData.PersonId
-                break
+            } else {
+                Write-Information '[DryRun] Create and correlate DormakabaExos account, will be executed during enforcement'
             }
+            $auditLogMessage = "Create account was successful. AccountReference is: [$($outputContext.AccountReference)]"
+            break
         }
 
-        $success = $true
-        $auditLogs.Add([PSCustomObject]@{
-                Message = "$action account was successful. AccountReference is: [$accountReference]"
-                IsError = $false
-            })
+        'CorrelateAccount' {
+            Write-Information 'Correlating DormakabaExos account'
+
+            $outputContext.Data = $correlatedAccount
+            $outputContext.AccountReference = $correlatedAccount.PersonBaseData.PersonId
+            $outputContext.AccountCorrelated = $true
+            $auditLogMessage = "Correlated account: [$($outputContext.AccountReference)] on field: [$($correlationField)] with value: [$($correlationValue)]"
+            break
+        }
     }
+
+    $outputContext.success = $true
+    $outputContext.AuditLogs.Add([PSCustomObject]@{
+            Action  = $action
+            Message = $auditLogMessage
+            IsError = $false
+        })
 } catch {
-    $errorMessage = "Could not $action DormakabaExos account. Error: $($_.Exception.Message)  $($_.ErrorDetails.message)"
-    Write-Verbose $errorMessage -Verbose
-    $auditLogs.Add([PSCustomObject]@{
-            Message = $errorMessage
+    $outputContext.success = $false
+    $ex = $PSItem
+    if ($($ex.Exception.GetType().FullName -eq 'Microsoft.PowerShell.Commands.HttpResponseException') -or
+        $($ex.Exception.GetType().FullName -eq 'System.Net.WebException')) {
+        $errorObj = Resolve-DormakabaExosError -ErrorObject $ex
+        $auditMessage = "Could not create or correlate DormakabaExos account. Error: $($errorObj.FriendlyMessage)"
+        Write-Warning "Error at Line '$($errorObj.ScriptLineNumber)': $($errorObj.Line). Error: $($errorObj.ErrorDetails)"
+    } else {
+        $auditMessage = "Could not create or correlate DormakabaExos account. Error: $($ex.Exception.Message)"
+        Write-Warning "Error at Line '$($ex.InvocationInfo.ScriptLineNumber)': $($ex.InvocationInfo.Line). Error: $($ex.Exception.Message)"
+    }
+    $outputContext.AuditLogs.Add([PSCustomObject]@{
+            Message = $auditMessage
             IsError = $true
         })
-} finally {
-    if ($null -ne $headers) {
-        Write-Verbose 'logout'
-        $splatLogOut = @{
-            Uri     = "$($Config.BaseUrl)/ExosApi/api/v1.0/logins/logoutMyself"
-            Method  = 'POST'
-            Headers = $headers
-        }
-        try {
-            $null = Invoke-RestMethod @splatLogOut -Verbose:$false
-        } catch {
-            Write-Verbose "Warning LogoutMyself Failed, $($_.Exception.Message)  $($_.ErrorDetails.message)".trim(' ') -Verbose
-        }
-    }
-
-    $result = [PSCustomObject]@{
-        Success          = $success
-        AccountReference = $accountReference
-        Auditlogs        = $auditLogs
-        Account          = $account
-    }
-    Write-Output $result | ConvertTo-Json -Depth 10
 }

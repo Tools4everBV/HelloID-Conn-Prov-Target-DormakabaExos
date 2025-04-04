@@ -1,43 +1,10 @@
-#####################################################
+#################################################
 # HelloID-Conn-Prov-Target-DormakabaExos-Update
-#
-# Version: 1.0.0
-#####################################################
-# Initialize default values
-$config = $configuration | ConvertFrom-Json
-$p = $person | ConvertFrom-Json
-$pp = $previousPerson | ConvertFrom-Json
-$aRef = $AccountReference | ConvertFrom-Json
-$success = $false
-$auditLogs = [System.Collections.Generic.List[PSCustomObject]]::new()
-
-# Account mapping
-$account = [PSCustomObject]@{
-    PersonBaseData = [PSCustomObject]@{
-        PersonalNumber = $p.ExternalId
-        FirstName      = $p.Name.GivenName
-        LastName       = "$($p.Name.FamilyNamePrefix) $($p.Name.FamilyName)".trim(' ')
-        EMail          = $p.Accounts.MicrosoftActiveDirectory.mail
-    }
-}
-
-$previousAccount = [PSCustomObject]@{
-    PersonBaseData = [PSCustomObject]@{
-        PersonalNumber = $pp.ExternalId
-        FirstName      = $pp.Name.GivenName
-        LastName       = "$($pp.Name.FamilyNamePrefix) $($pp.Name.FamilyName)".trim(' ')
-        EMail          = $pp.Accounts.MicrosoftActiveDirectory.mail
-    }
-}
+# PowerShell V2
+#################################################
 
 # Enable TLS1.2
 [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor [System.Net.SecurityProtocolType]::Tls12
-
-# Set debug logging
-switch ($($config.IsDebug)) {
-    $true { $VerbosePreference = 'Continue' }
-    $false { $VerbosePreference = 'SilentlyContinue' }
-}
 
 #region functions
 function Get-AuthorizationHeaders {
@@ -80,38 +47,93 @@ function Get-AuthorizationHeaders {
         $PSCmdlet.ThrowTerminatingError($_)
     }
 }
+
+function Resolve-DormakabaExosError {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory)]
+        [object]
+        $ErrorObject
+    )
+    process {
+        $httpErrorObj = [PSCustomObject]@{
+            ScriptLineNumber = $ErrorObject.InvocationInfo.ScriptLineNumber
+            Line             = $ErrorObject.InvocationInfo.Line
+            ErrorDetails     = $ErrorObject.Exception.Message
+            FriendlyMessage  = $ErrorObject.Exception.Message
+        }
+        if (-not [string]::IsNullOrEmpty($ErrorObject.ErrorDetails.Message)) {
+            $httpErrorObj.ErrorDetails = $ErrorObject.ErrorDetails.Message
+        } elseif ($ErrorObject.Exception.GetType().FullName -eq 'System.Net.WebException') {
+            if ($null -ne $ErrorObject.Exception.Response) {
+                $streamReaderResponse = [System.IO.StreamReader]::new($ErrorObject.Exception.Response.GetResponseStream()).ReadToEnd()
+                if (-not [string]::IsNullOrEmpty($streamReaderResponse)) {
+                    $httpErrorObj.ErrorDetails = $streamReaderResponse
+                }
+            }
+        }
+        try {
+            $errorDetailsObject = ($httpErrorObj.ErrorDetails | ConvertFrom-Json)
+            # Make sure to inspect the error result object and add only the error message as a FriendlyMessage.
+            # $httpErrorObj.FriendlyMessage = $errorDetailsObject.message
+            $httpErrorObj.FriendlyMessage = $httpErrorObj.ErrorDetails # Temporarily assignment
+        } catch {
+            $httpErrorObj.FriendlyMessage = $httpErrorObj.ErrorDetails
+        }
+        Write-Output $httpErrorObj
+    }
+}
 #endregion
 
 try {
-    # Verify if the account must be updated
-    $splatCompareProperties = @{
-        ReferenceObject  = @($previousAccount.PersonBaseData.PSObject.Properties)
-        DifferenceObject = @($account.PersonBaseData.PSObject.Properties)
+    # Verify if [aRef] has a value
+    if ([string]::IsNullOrEmpty($($actionContext.References.Account))) {
+        throw 'The account reference could not be found'
     }
-    $propertiesChanged = (Compare-Object @splatCompareProperties -PassThru).Where({ $_.SideIndicator -eq '=>' })
-    if ($propertiesChanged) {
-        $action = 'Update'
+
+    Write-Information 'Verifying if a DormakabaExos account exists'
+
+    $splatAuthHeaders = @{
+        Username = $actionContext.Configuration.UserName
+        Password = $actionContext.Configuration.Password
+        BaseUrl  = $actionContext.Configuration.BaseUrl
+    }
+
+    $Autorizationheaders = Get-AuthorizationHeaders @splatAuthHeaders
+
+    $splatGetPersons = @{
+        Uri     = "$($actionContext.Configuration.BaseUrl)/ExosApi/api/v1.0/persons?`$filter=(PersonBaseData/PersonId eq '$($actionContext.References.Account)')&`$expand=PersonBaseData(`$select=*)"
+        Method  = 'GET'
+        Headers = $Autorizationheaders
+    }
+    $correlatedAccount = (Invoke-RestMethod @splatGetPersons -Verbose:$false).value[0]
+
+    $outputContext.PreviousData = $correlatedAccount
+
+    # Always compare the account against the current account in target system
+    if ($null -ne $correlatedAccount) {
+        $splatCompareProperties = @{
+            ReferenceObject  = @($correlatedAccount.PersonBaseData.PSObject.Properties)
+            DifferenceObject = @($actionContext.Data.PersonBaseData.PSObject.Properties)
+        }
+        $propertiesChanged = Compare-Object @splatCompareProperties -PassThru | Where-Object { $_.SideIndicator -eq '=>' }
+        if ($propertiesChanged) {
+            $action = 'UpdateAccount'
+        } else {
+            $action = 'NoChanges'
+        }
     } else {
-        $action = 'NoChanges'
+        $action = 'NotFound'
     }
 
-    # Add an auditMessage showing what will happen during enforcement
-    if ($dryRun -eq $true) {
-        $auditLogs.Add([PSCustomObject]@{
-                Message = "Update DormakabaExos account for: [$($p.DisplayName)] will be executed during enforcement"
-            })
-    }
+    # Process
+    switch ($action) {
+        'UpdateAccount' {
+            Write-Information "Account property(s) required to update: $($propertiesChanged.Name -join ', ')"
 
-    if (-not($dryRun -eq $true)) {
-        switch ($action) {
-            'Update' {
-                Write-Verbose "Updating DormakabaExos account with accountReference: [$aRef]"
-                $splatAuthHeaders = @{
-                    Username = $config.UserName
-                    Password = $config.Password
-                    BaseUrl  = $config.BaseUrl
-                }
-                $headers = Get-AuthorizationHeaders @splatAuthHeaders
+            # Make sure to test with special characters and if needed; add utf8 encoding.
+            if (-not($actionContext.DryRun -eq $true)) {
+                Write-Information "Updating DormakabaExos account with accountReference: [$($actionContext.References.Account)]"
 
                 $body = @{
                     PersonBaseData = @{}
@@ -120,56 +142,60 @@ try {
                     $body.PersonBaseData["$($property.name)"] = $property.value
                 }
                 $splatRestMethod = @{
-                    Uri     = "$($Config.BaseUrl)/ExosApi/api/v1.0/persons/$($aRef)/Update"
+                    Uri     = "$($actionContext.Configuration.BaseUrl)/ExosApi/api/v1.0/persons/$($actionContext.References.Account))/Update"
                     Method  = 'Post'
-                    Headers = $headers
+                    Headers = $Autorizationheaders
                     body    = ($body | ConvertTo-Json -Depth 10)
                 }
                 $null = Invoke-RestMethod @splatRestMethod -Verbose:$false
-                $auditLogs.Add([PSCustomObject]@{
-                        Message = 'Update account was successful'
-                        IsError = $false
-                    })
-                break
+
+            } else {
+                Write-Information "[DryRun] Update DormakabaExos account with accountReference: [$($actionContext.References.Account)], will be executed during enforcement"
             }
 
-            'NoChanges' {
-                Write-Verbose "No changes to DormakabaExos account with accountReference: [$aRef]"
-                $auditLogs.Add([PSCustomObject]@{
-                        Message = 'Update skipped. No change is required to the DormakabaExos account.'
-                        IsError = $false
-                    })
-                break
-            }
+            $outputContext.Success = $true
+            $outputContext.AuditLogs.Add([PSCustomObject]@{
+                    Message = "Update account was successful, Account property(s) updated: [$($propertiesChanged.name -join ',')]"
+                    IsError = $false
+                })
+            break
         }
-        $success = $true
+
+        'NoChanges' {
+            Write-Information "No changes to DormakabaExos account with accountReference: [$($actionContext.References.Account)]"
+
+            $outputContext.Success = $true
+            $outputContext.AuditLogs.Add([PSCustomObject]@{
+                    Message = 'No changes will be made to the account during enforcement'
+                    IsError = $false
+                })
+            break
+        }
+
+        'NotFound' {
+            Write-Information "DormakabaExos account: [$($actionContext.References.Account)] could not be found, possibly indicating that it could be deleted"
+            $outputContext.Success = $false
+            $outputContext.AuditLogs.Add([PSCustomObject]@{
+                    Message = "DormakabaExos account with accountReference: [$($actionContext.References.Account)] could not be found, possibly indicating that it could be deleted"
+                    IsError = $true
+                })
+            break
+        }
     }
 } catch {
-    $errorMessage = "Could not update DormakabaExos account. Error: $($_.Exception.Message)  $($_.ErrorDetails.message)"
-    Write-Verbose $errorMessage -Verbose
-    $auditLogs.Add([PSCustomObject]@{
-            Message = $errorMessage
+    $outputContext.Success  = $false
+    $ex = $PSItem
+    if ($($ex.Exception.GetType().FullName -eq 'Microsoft.PowerShell.Commands.HttpResponseException') -or
+        $($ex.Exception.GetType().FullName -eq 'System.Net.WebException')) {
+        $errorObj = Resolve-DormakabaExosError -ErrorObject $ex
+        $auditMessage = "Could not update DormakabaExos account. Error: $($errorObj.FriendlyMessage)"
+        Write-Warning "Error at Line '$($errorObj.ScriptLineNumber)': $($errorObj.Line). Error: $($errorObj.ErrorDetails)"
+    } else {
+        $auditMessage = "Could not update DormakabaExos account. Error: $($ex.Exception.Message)"
+        Write-Warning "Error at Line '$($ex.InvocationInfo.ScriptLineNumber)': $($ex.InvocationInfo.Line). Error: $($ex.Exception.Message)"
+    }
+    $outputContext.AuditLogs.Add([PSCustomObject]@{
+            Message = $auditMessage
             IsError = $true
         })
-} finally {
-    if ($null -ne $headers) {
-        Write-Verbose 'logout'
-        $splatLogOut = @{
-            Uri     = "$($Config.BaseUrl)/ExosApi/api/v1.0/logins/logoutMyself"
-            Method  = 'POST'
-            Headers = $headers
-        }
-        try {
-            $null = Invoke-RestMethod @splatLogOut -Verbose:$false
-        } catch {
-            Write-Verbose "Warning LogoutMyself Failed, $($_.Exception.Message)  $($_.ErrorDetails.message)".trim(' ') -Verbose
-        }
-    }
-
-    $result = [PSCustomObject]@{
-        Success   = $success
-        Account   = $account
-        Auditlogs = $auditLogs
-    }
-    Write-Output $result | ConvertTo-Json -Depth 10
 }
