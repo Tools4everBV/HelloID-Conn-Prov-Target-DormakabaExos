@@ -1,5 +1,8 @@
 # HelloID-Conn-Prov-Target-DormakabaExos
 
+> [!WARNING]
+> Version `4.3.3` of DormakabaExos introduces a new method for retrieving the authentication token. This change is implemented in this release. If this method does not work with older installations, please use a previous release or contact DormakabaExos for advice.
+
 > [!IMPORTANT]
 > This repository contains the connector and configuration code only. The implementer is responsible to acquire the connection details such as username, password, certificate, etc. You might even need to sign a contract or agreement with the supplier before implementing this connector. Please contact the client's application manager to coordinate the connector requirements.
 
@@ -9,7 +12,7 @@
 
 ## Table of contents
 
-- [HelloID-Conn-Prov-Target-DormakabaExos](#helloid-conn-prov-target-connectorname)
+- [HelloID-Conn-Prov-Target-DormakabaExos](#helloid-conn-prov-target-dormakabaexos)
   - [Table of contents](#table-of-contents)
   - [Introduction](#introduction)
   - [Getting started](#getting-started)
@@ -27,22 +30,22 @@
 
 _HelloID-Conn-Prov-Target-DormakabaExos_ is a _target_ connector. _DormakabaExos_ provides a set of REST API's that allow you to programmatically interact with its data. The HelloID connector uses the API endpoints listed in the table below.
 
-| Endpoint | Description |
-| -------- | ----------- |
-| /ExosApi/api/v1.0/persons        |  get endpoint for the account  |
-| /ExosApi/api/v1.0/persons/create | post endpoint for the account creation   |
-| /ExosApi/api/v1.0/persons{personid}/update | post endpoint for the account update   |
-| /ExosApi/api/v1.0/persons{personid}/block | post endpoint for the account update   |
+| Endpoint                                    | Description                            |
+| ------------------------------------------- | -------------------------------------- |
+| /ExosApi/api/v1.0/persons                   | get endpoint for the account           |
+| /ExosApi/api/v1.0/persons/create            | post endpoint for the account creation |
+| /ExosApi/api/v1.0/persons{personid}/update  | post endpoint for the account update   |
+| /ExosApi/api/v1.0/persons{personid}/block   | post endpoint for the account update   |
 | /ExosApi/api/v1.0/persons{personid}/unblock | post endpoint for the account update   |
 
 The following lifecycle actions are available:
 
-| Action                                  | Description                               |
-| --------------------------------------- | ----------------------------------------- |
-| create.ps1                              | PowerShell _create_ lifecycle action      |
-| disable.ps1                             | PowerShell _disable_ lifecycle action     |
-| enable.ps1                              | PowerShell _enable_ lifecycle action      |
-| update.ps1                              | PowerShell _update_ lifecycle action      |
+| Action      | Description                           |
+| ----------- | ------------------------------------- |
+| create.ps1  | PowerShell _create_ lifecycle action  |
+| disable.ps1 | PowerShell _disable_ lifecycle action |
+| enable.ps1  | PowerShell _enable_ lifecycle action  |
+| update.ps1  | PowerShell _update_ lifecycle action  |
 
 | Connection configuration and field mapping files
 | configuration.json                      | Default _configuration.json_              |
@@ -65,10 +68,10 @@ To properly setup the correlation:
 
 2. Specify the following configuration:
 
-    | Setting                   | Value                             |
-    | ------------------------- | --------------------------------- |
-    | Enable correlation        | `True`                            |
-    | Person correlation field  | `PersonContext.Person.ExternalId` |
+    | Setting                  | Value                             |
+    | ------------------------ | --------------------------------- |
+    | Enable correlation       | `True`                            |
+    | Person correlation field | `PersonContext.Person.ExternalId` |
 
 Correlation is done based on the: **PersonalNumber**  field in the PersonBaseData object of the person in
 
@@ -83,11 +86,13 @@ The field mapping can be imported by using the _fieldMapping.json_ file.
 
 The following settings are required to connect to the API.
 
-| Setting  | Description                        | Mandatory |
-| -------- | ---------------------------------- | --------- |
-| UserName | The UserName to connect to the API | Yes       |
-| Password | The Password to connect to the API | Yes       |
-| BaseUrl  | The URL to the API                 | Yes       |
+| Setting        | Description                                          | Mandatory |
+| -------------- | ---------------------------------------------------- | --------- |
+| UserName       | The UserName to connect to the API                   | Yes       |
+| Password       | The Password to connect to the API                   | Yes       |
+| BaseUrl        | The URL to the API                                   | Yes       |
+| TenantId       | Default `0` or `1`. Contact DormakabaExos for advice | Yes       |
+| RequestChannel | Default `0`. Contact DormakabaExos for advice        | Yes       |
 
 
 - Make sure to limit the Concurrent Actions to one. Required because there is a maximum number of simultaneous login sessions.

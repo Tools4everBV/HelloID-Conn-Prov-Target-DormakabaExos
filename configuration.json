@@ -23,11 +23,31 @@
   {
     "key": "BaseUrl",
     "type": "input",
-    "defaultValue": "",
+    "defaultValue": "https://dormakaba.companyname.nl",
     "templateOptions": {
       "label": "BaseUrl",
       "description": "The URL to the API.",
       "required": true
     }
+  },
+  {
+    "defaultValue": "1",
+    "key": "TenantId",
+    "templateOptions": {
+      "description": "The TenantId to the API.",
+      "label": "TenantId",
+      "required": true
+    },
+    "type": "input"
+  },
+  {
+    "defaultValue": "0",
+    "key": "RequestChannel",
+    "templateOptions": {
+      "description": "The RequestChannel to the API.",
+      "label": "RequestChannel",
+      "required": true
+    },
+    "type": "input"
   }
 ]
