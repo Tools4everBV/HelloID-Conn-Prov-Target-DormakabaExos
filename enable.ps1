@@ -21,20 +21,33 @@ function Get-AuthorizationHeaders {
 
         [Parameter(Mandatory)]
         [string]
-        $BaseUrl
+        $BaseUrl,
+
+        [Parameter(Mandatory)]
+        [string]
+        $TenantId,
+
+        [Parameter(Mandatory)]
+        [string]
+        $RequestChannel
     )
     try {
         Write-Verbose  'Get Identifier'
-        $pair = "$($Username):$($Password)"
-        $encodedCredsUsername = [System.Convert]::ToBase64String([System.Text.Encoding]::ASCII.GetBytes($pair))
-        $splatRestMethod = @{
-            Uri     = "$BaseUrl/ExosApiLogin/api/v1.0/login"
-            Method  = 'POST'
-            Headers = @{
-                Authorization = "Basic $encodedCredsUsername"
-            }
+        $body = @{
+            tenantId       = $TenantId
+            requestChannel = $RequestChannel
+            userName       = $Username
+            password       = $Password
         }
-        $identifier = (Invoke-RestMethod @splatRestMethod -Verbose:$false).value.Identifier
+
+        $splatRestMethod = @{
+            Uri         = "$BaseUrl/ExosAuth/api/v1/login"
+            ContentType = "application/json"
+            Method      = 'POST'
+            Body        = $body | ConvertTo-Json
+            Verbose     = $false
+        }
+        $identifier = Invoke-RestMethod @splatRestMethod
 
         Write-Verbose 'Set Authorization Headers'
         $pair = "MyApiKey:$identifier"
@@ -44,7 +57,8 @@ function Get-AuthorizationHeaders {
             'Content-Type' = 'application/json;charset=utf-8'
             Accept         = 'application/json;charset=utf-8'
         }
-    } catch {
+    }
+    catch {
         $PSCmdlet.ThrowTerminatingError($_)
     }
 }
@@ -64,7 +78,8 @@ function Resolve-DormakabaExosError {
         }
         if (-not [string]::IsNullOrEmpty($ErrorObject.ErrorDetails.Message)) {
             $httpErrorObj.ErrorDetails = $ErrorObject.ErrorDetails.Message
-        } elseif ($ErrorObject.Exception.GetType().FullName -eq 'System.Net.WebException') {
+        }
+        elseif ($ErrorObject.Exception.GetType().FullName -eq 'System.Net.WebException') {
             if ($null -ne $ErrorObject.Exception.Response) {
                 $streamReaderResponse = [System.IO.StreamReader]::new($ErrorObject.Exception.Response.GetResponseStream()).ReadToEnd()
                 if (-not [string]::IsNullOrEmpty($streamReaderResponse)) {
@@ -77,7 +92,8 @@ function Resolve-DormakabaExosError {
             # Make sure to inspect the error result object and add only the error message as a FriendlyMessage.
             # $httpErrorObj.FriendlyMessage = $errorDetailsObject.message
             $httpErrorObj.FriendlyMessage = $httpErrorObj.ErrorDetails # Temporarily assignment
-        } catch {
+        }
+        catch {
             $httpErrorObj.FriendlyMessage = $httpErrorObj.ErrorDetails
         }
         Write-Output $httpErrorObj
@@ -94,9 +110,11 @@ try {
     Write-Information 'Verifying if a DormakabaExos account exists'
 
     $splatAuthHeaders = @{
-        Username = $actionContext.Configuration.UserName
-        Password = $actionContext.Configuration.Password
-        BaseUrl  = $actionContext.Configuration.BaseUrl
+        Username       = $actionContext.Configuration.UserName
+        Password       = $actionContext.Configuration.Password
+        BaseUrl        = $actionContext.Configuration.BaseUrl
+        TenantId       = $actionContext.Configuration.TenantId
+        RequestChannel = $actionContext.Configuration.RequestChannel
     }
 
     $Autorizationheaders = Get-AuthorizationHeaders @splatAuthHeaders
@@ -111,7 +129,8 @@ try {
 
     if ($null -ne $correlatedAccount) {
         $action = 'EnableAccount'
-    } else {
+    }
+    else {
         $action = 'NotFound'
     }
 
@@ -128,12 +147,14 @@ try {
                 }
                 try {
                     $null = Invoke-RestMethod @splatRestMethod -Verbose:$false
-                } catch {
+                }
+                catch {
                     if ($_.ErrorDetails.message -notmatch 'Person can not be unblocked as it has already been unblocked') {
                         throw $_
                     }
                 }
-            } else {
+            }
+            else {
                 Write-Information "[DryRun] Enable DormakabaExos account with accountReference: [$($actionContext.References.Account)], will be executed during enforcement"
             }
 
@@ -156,7 +177,8 @@ try {
         }
     }
 
-} catch {
+}
+catch {
     $outputContext.success = $false
     $ex = $PSItem
     if ($($ex.Exception.GetType().FullName -eq 'Microsoft.PowerShell.Commands.HttpResponseException') -or
@@ -164,12 +186,13 @@ try {
         $errorObj = Resolve-DormakabaExosError -ErrorObject $ex
         $auditMessage = "Could not enable DormakabaExos account. Error: $($errorObj.FriendlyMessage)"
         Write-Warning "Error at Line '$($errorObj.ScriptLineNumber)': $($errorObj.Line). Error: $($errorObj.ErrorDetails)"
-    } else {
+    }
+    else {
         $auditMessage = "Could not enable DormakabaExos account. Error: $($_.Exception.Message)"
         Write-Warning "Error at Line '$($ex.InvocationInfo.ScriptLineNumber)': $($ex.InvocationInfo.Line). Error: $($ex.Exception.Message)"
     }
     $outputContext.AuditLogs.Add([PSCustomObject]@{
-        Message = $auditMessage
-        IsError = $true
-    })
+            Message = $auditMessage
+            IsError = $true
+        })
 }
