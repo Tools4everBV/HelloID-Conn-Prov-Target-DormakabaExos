@@ -117,12 +117,12 @@ try {
         RequestChannel = $actionContext.Configuration.RequestChannel
     }
 
-    $Autorizationheaders = Get-AuthorizationHeaders @splatAuthHeaders
+    $authorizationHeaders = Get-AuthorizationHeaders @splatAuthHeaders
 
     $splatGetPersons = @{
         Uri     = "$($actionContext.Configuration.BaseUrl)/ExosApi/api/v1.0/persons?`$filter=(PersonBaseData/PersonId eq '$($actionContext.References.Account)')"
         Method  = 'GET'
-        Headers = $Autorizationheaders
+        Headers = $authorizationHeaders
     }
     $correlatedAccount = (Invoke-RestMethod @splatGetPersons -Verbose:$false).value[0]
 
@@ -142,8 +142,8 @@ try {
                 $splatRestMethod = @{
                     Uri     = "$($actionContext.Configuration.BaseUrl)/ExosApi/api/v1.0/persons/$($actionContext.References.Account)/block"
                     Method  = 'Post'
-                    Headers = $Autorizationheaders
-                    body    = @{ Reason = 'Automated HelloId Provisioing' } | ConvertTo-Json
+                    Headers = $authorizationHeaders
+                    body    = @{ Reason = 'Automated HelloID Provisioning' } | ConvertTo-Json
                 }
                 try {
                     $null = Invoke-RestMethod @splatRestMethod -Verbose:$false
@@ -158,31 +158,53 @@ try {
                 $splatGetPersons = @{
                     Uri     = "$($actionContext.Configuration.BaseUrl)/ExosApi/api/v1.0/persons?`$filter=(PersonBaseData/PersonId eq '$($actionContext.References.Account)')&`$expand=Badge(`$select=badgename)"
                     Method  = 'GET'
-                    Headers = $headers
+                    Headers = $authorizationHeaders
                 }
                 $responseUser = (Invoke-RestMethod @splatGetPersons -Verbose:$false).value[0]
 
                 if ($responseUser.Badge.badgeName.count -eq 0) {
-                    Write-information "No Badges were assigned to [$($Aref)]"
+                    Write-information "No Badges were assigned to [$($actionContext.References.Account)]"
                 }
                 else {
-                    foreach ($badge in $responseUser.Badge) {
-                        Write-Information "Unassigning Badge [$($badge.BadgeName)]"
+                    if (-not($actionContext.DryRun -eq $true)) {
+                        foreach ($badge in $responseUser.Badge) {
+                            if ($actionContext.Configuration.blockBadge) {
+                                Write-Information "Blocking Badge [$($badge.BadgeName)]"
 
-                        $splatRestMethod = @{
-                            Uri     = "$($Config.BaseUrl)/ExosApi/api/v1.0/persons/$($actionContext.References.Account)/unassignBadge"
-                            Method  = 'Post'
-                            Headers = $headers
-                            body    = @{ BadgeName = $badge.BadgeName } | ConvertTo-Json
+                                $splatRestMethod = @{
+                                    Uri     = "$($actionContext.Configuration.BaseUrl)/ExosApi/api/v1.0/badges/block"
+                                    Method  = 'Post'
+                                    Headers = $authorizationHeaders
+                                    body    = @{ BadgeName = $badge.BadgeName } | ConvertTo-Json
+                                }
+                                $null = Invoke-RestMethod @splatRestMethod -Verbose:$false
+                                $outputContext.AuditLogs.Add([PSCustomObject]@{
+                                        Message = "Block Badge [$($badge.BadgeName)] was successful"
+                                        IsError = $false
+                                    })
+                            }
+
+                            if ($actionContext.Configuration.unassignBadge) {
+                                Write-Information "Unassigning Badge [$($badge.BadgeName)]"
+
+                                $splatRestMethod = @{
+                                    Uri     = "$($actionContext.Configuration.BaseUrl)/ExosApi/api/v1.0/persons/$($actionContext.References.Account)/unassignBadge"
+                                    Method  = 'Post'
+                                    Headers = $authorizationHeaders
+                                    body    = @{ BadgeName = $badge.BadgeName } | ConvertTo-Json
+                                }
+                                $null = Invoke-RestMethod @splatRestMethod -Verbose:$false
+                                $outputContext.AuditLogs.Add([PSCustomObject]@{
+                                        Message = "Unassign Badge [$($badge.BadgeName)] was successful"
+                                        IsError = $false
+                                    })
+                            }
                         }
-                        $null = Invoke-RestMethod @splatRestMethod -Verbose:$false
-                        $outputContext.AuditLogs.Add([PSCustomObject]@{
-                                Message = "Unassign Badge [$($badge.BadgeName)] was successful"
-                                IsError = $false
-                            })
+                    }
+                    else {
+                        Write-Information "[DryRun] Unassign Badges from DormakabaExos account with accountReference: [$($actionContext.References.Account)], will be executed during enforcement"
                     }
                 }
-
             }
             else {
                 Write-Information "[DryRun] Disable DormakabaExos account with accountReference: [$($actionContext.References.Account)], will be executed during enforcement"
@@ -190,7 +212,7 @@ try {
 
             $outputContext.Success = $true
             $outputContext.AuditLogs.Add([PSCustomObject]@{
-                    Message = 'Disable account was successful'
+                    Message = "Disable account was successful. Action initiated by: [$($actionContext.Origin)]"
                     IsError = $false
                 })
             break
@@ -208,20 +230,49 @@ try {
     }
 }
 catch {
-    $outputContext.success = $false
+    $outputContext.Success = $false
     $ex = $PSItem
     if ($($ex.Exception.GetType().FullName -eq 'Microsoft.PowerShell.Commands.HttpResponseException') -or
         $($ex.Exception.GetType().FullName -eq 'System.Net.WebException')) {
         $errorObj = Resolve-DormakabaExosError -ErrorObject $ex
-        $auditMessage = "Could not disable DormakabaExos account. Error: $($errorObj.FriendlyMessage)"
+        $auditLogMessage = "Could not disable DormakabaExos account. Error: $($errorObj.FriendlyMessage)"
         Write-Warning "Error at Line '$($errorObj.ScriptLineNumber)': $($errorObj.Line). Error: $($errorObj.ErrorDetails)"
     }
     else {
-        $auditMessage = "Could not disable DormakabaExos account. Error: $($_.Exception.Message)"
+        $auditLogMessage = "Could not disable DormakabaExos account. Error: $($_.Exception.Message)"
         Write-Warning "Error at Line '$($ex.InvocationInfo.ScriptLineNumber)': $($ex.InvocationInfo.Line). Error: $($ex.Exception.Message)"
     }
-    $outputContext.AuditLogs.Add([PSCustomObject]@{
-            Message = $auditMessage
+    if ($auditLogMessage -like "*Person can not be blocked as it has already been blocked*") {
+        $outputContext.AuditLogs.Add([PSCustomObject]@{
+            Message = $auditLogMessage
+            IsError = $false
+        })
+        $outputContext.Success = $true
+    }
+    else {
+        $outputContext.AuditLogs.Add([PSCustomObject]@{
+            Message = $auditLogMessage
             IsError = $true
         })
+    }
+}
+finally {
+    if ($null -ne $authorizationHeaders) {
+        Write-Information 'logout'
+
+        $splatLogOut = @{
+            Uri         = "$($actionContext.Configuration.BaseUrl)/ExosApi/api/v1.0/logins/logoutMyself"
+            Method      = 'POST'
+            Headers     = $authorizationHeaders
+            Verbose     = $false
+        }
+
+        try {
+            $null = Invoke-RestMethod @splatLogOut
+            Write-Information "LogoutMyself succeeded"
+        }
+        catch {
+            Write-Information "Warning LogoutMyself failed, $($_.Exception.Message) $($_.ErrorDetails.message)".trim(' ')
+        }
+    }
 }

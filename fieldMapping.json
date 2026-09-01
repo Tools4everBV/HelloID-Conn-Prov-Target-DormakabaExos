@@ -46,7 +46,7 @@
             "Update"
           ],
           "MappingMode": "Complex",
-          "Value": "\"\\n// generateDisplayNameOption1.js [https://github.com/Tools4everBV/HelloID-Lib-Prov-HelperFunctions/blob/master/Javascript/Target/DisplayName/Scripts/generateDisplayNameOption1.js]\\n//\\n// Mapping logic to generate the DisplayName according to the following convention.\\n// B\\tJanine van den Boele\\n// BP\\tJanine van den Boele – de Vries\\n// P\\tJanine de Vries\\n// PB   Janine de Vries – van den Boele\\nfunction generateDisplayName() {\\n    let nickName = Person.Name.NickName;\\n    let middleName = Person.Name.FamilyNamePrefix;\\n    let lastName = Person.Name.FamilyName;\\n    let middleNamePartner = Person.Name.FamilyNamePartnerPrefix;\\n    let lastNamePartner = Person.Name.FamilyNamePartner;\\n    let convention = Person.Name.Convention;\\n\\n    let displayName = '';\\n    switch (convention) {\\n        case \\\"BP\\\":\\n            displayName = displayName + nickName + ' ';\\n            if (typeof middleName !== 'undefined' && middleName) { displayName = displayName + middleName + ' ' }\\n            displayName = displayName + lastName;\\n\\n            displayName = displayName + ' - ';\\n            if (typeof middleNamePartner !== 'undefined' && middleNamePartner) { displayName = displayName + middleNamePartner + ' ' }\\n            displayName = displayName + lastNamePartner;\\n            break;\\n        case \\\"PB\\\":\\n            displayName = displayName + nickName + ' ';\\n            if (typeof middleNamePartner !== 'undefined' && middleNamePartner) { displayName = displayName + middleNamePartner + ' ' }\\n            displayName = displayName + lastNamePartner;\\n\\n            displayName = displayName + ' - ';\\n            if (typeof middleName !== 'undefined' && middleName) { displayName = displayName + middleName + ' ' }\\n            displayName = displayName + lastName;\\n            break;\\n        case \\\"P\\\":\\n            displayName = displayName + nickName + ' ';\\n            if (typeof middleNamePartner !== 'undefined' && middleNamePartner) { displayName = displayName + middleNamePartner + ' ' }\\n            displayName = displayName + lastNamePartner;\\n            break;\\n        case \\\"B\\\":\\n        default:\\n            displayName = displayName + nickName + ' ';\\n            if (typeof middleName !== 'undefined' && middleName) { displayName = displayName + middleName + ' ' }\\n            displayName = displayName + lastName;\\n            break;\\n    }\\n    // Trim spaces at start and end\\n    displayName = displayName.trim();\\n\\n    // Shorten string to maxAttributeLength \\n    const maxAttributeLength = 256;\\n    displayName = displayName.substring(0, maxAttributeLength);\\n\\n    return displayName;\\n}\\n\\ngenerateDisplayName();\\n\"",
+          "Value": "\"// generateSurnameOption1.js [https://github.com/Tools4everBV/HelloID-Lib-Prov-HelperFunctions/blob/master/Javascript/Target/Surname_Lastname/Scripts/generateSurnameOption1.js]\\n//\\n// Mapping logic to generate the Surname according to the following convention.\\n// B\\tvan den Boele\\n// BP\\tvan den Boele – de Vries\\n// P\\tde Vries\\n// PB   de Vries – van den Boele\\nfunction generateSurname() {\\n    let nickName = Person.Name.NickName;\\n    let middleName = Person.Name.FamilyNamePrefix;\\n    let lastName = Person.Name.FamilyName;\\n    let middleNamePartner = Person.Name.FamilyNamePartnerPrefix;\\n    let lastNamePartner = Person.Name.FamilyNamePartner;\\n    let convention = Person.Name.Convention;\\n\\n    let surName = '';\\n    switch (convention) {\\n        case \\\"BP\\\":\\n            if (typeof middleName !== 'undefined' && middleName) { surName = surName + middleName + ' ' }\\n            surName = surName + lastName;\\n\\n            surName = surName + ' - ';\\n            if (typeof middleNamePartner !== 'undefined' && middleNamePartner) { surName = surName + middleNamePartner + ' ' }\\n            surName = surName + lastNamePartner;\\n            break;\\n        case \\\"PB\\\":\\n            if (typeof middleNamePartner !== 'undefined' && middleNamePartner) { surName = surName + middleNamePartner + ' ' }\\n            surName = surName + lastNamePartner;\\n\\n            surName = surName + ' - ';\\n            if (typeof middleName !== 'undefined' && middleName) { surName = surName + middleName + ' ' }\\n            surName = surName + lastName;\\n            break;\\n        case \\\"P\\\":\\n            if (typeof middleNamePartner !== 'undefined' && middleNamePartner) { surName = surName + middleNamePartner + ' ' }\\n            surName = surName + lastNamePartner;\\n            break;\\n        case \\\"B\\\":\\n        default:\\n            if (typeof middleName !== 'undefined' && middleName) { surName = surName + middleName + ' ' }\\n            surName = surName + lastName;\\n            break;\\n    }\\n    // Trim spaces at start and end\\n    surName = surName.trim();\\n\\n    // Shorten string to maxAttributeLength \\n    const maxAttributeLength = 64;\\n    surName = surName.substring(0, maxAttributeLength);\\n\\n    return surName;\\n}\\n\\ngenerateSurname();\"",
           "UsedInNotifications": false,
           "StoreInAccountData": false
         }
@@ -64,6 +64,51 @@
           ],
           "MappingMode": "Complex",
           "Value": "\"function getValue() {\\n    return Person.Accounts.MicrosoftActiveDirectory.mail;\\n}\\ngetValue();\"",
+          "UsedInNotifications": false,
+          "StoreInAccountData": false
+        }
+      ]
+    },
+    {
+      "Name": "PersonTenantFreeFields.Text1",
+      "Description": "",
+      "Type": "Text",
+      "MappingActions": [
+        {
+          "MapForActions": [
+            "Create",
+            "Update"
+          ],
+          "MappingMode": "Field",
+          "Value": "\"Person.PrimaryContract.Title.Name\"",
+          "UsedInNotifications": false,
+          "StoreInAccountData": false
+        }
+      ]
+    },
+    {
+      "Name": "PersonTenantFreeFields.Text50",
+      "Description": "",
+      "Type": "Text",
+      "MappingActions": [
+        {
+          "MapForActions": [
+            "Create",
+            "Enable",
+            "Update",
+            "Disable"
+          ],
+          "MappingMode": "Fixed",
+          "Value": "",
+          "UsedInNotifications": false,
+          "StoreInAccountData": false
+        },
+        {
+          "MapForActions": [
+            "Delete"
+          ],
+          "MappingMode": "Fixed",
+          "Value": "\"Deleted by HelloID\"",
           "UsedInNotifications": false,
           "StoreInAccountData": false
         }

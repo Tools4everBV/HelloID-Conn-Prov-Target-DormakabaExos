@@ -117,12 +117,12 @@ try {
         RequestChannel = $actionContext.Configuration.RequestChannel
     }
 
-    $Autorizationheaders = Get-AuthorizationHeaders @splatAuthHeaders
+    $authorizationHeaders = Get-AuthorizationHeaders @splatAuthHeaders
 
     $splatGetPersons = @{
-        Uri     = "$($actionContext.Configuration.BaseUrl)/ExosApi/api/v1.0/persons?`$filter=(PersonBaseData/PersonId eq '$($actionContext.References.Account)')&`$expand=PersonBaseData(`$select=*)"
+        Uri     = "$($actionContext.Configuration.BaseUrl)/ExosApi/api/v1.0/persons?`$filter=(PersonBaseData/PersonId eq '$($actionContext.References.Account)')&`$expand=PersonBaseData,PersonTenantFreeFields"
         Method  = 'GET'
-        Headers = $Autorizationheaders
+        Headers = $authorizationHeaders
     }
     $correlatedAccount = (Invoke-RestMethod @splatGetPersons -Verbose:$false).value[0]
 
@@ -134,8 +134,14 @@ try {
             ReferenceObject  = @($correlatedAccount.PersonBaseData.PSObject.Properties)
             DifferenceObject = @($actionContext.Data.PersonBaseData.PSObject.Properties)
         }
-        $propertiesChanged = Compare-Object @splatCompareProperties -PassThru | Where-Object { $_.SideIndicator -eq '=>' }
-        if ($propertiesChanged) {
+        $propertiesChanged1 = Compare-Object @splatCompareProperties -PassThru | Where-Object { $_.SideIndicator -eq '=>' }
+        
+        $splatComparePropertiesFreeFields = @{
+            ReferenceObject  = @($correlatedAccount.PersonTenantFreeFields.PSObject.Properties)
+            DifferenceObject = @($actionContext.Data.PersonTenantFreeFields.PSObject.Properties)
+        }
+        $propertiesChanged2 = Compare-Object @splatComparePropertiesFreeFields -PassThru | Where-Object { $_.SideIndicator -eq '=>' }
+        if ($propertiesChanged1.Count -gt 0 -or $propertiesChanged2.Count -gt 0) {
             $action = 'UpdateAccount'
         }
         else {
@@ -149,7 +155,7 @@ try {
     # Process
     switch ($action) {
         'UpdateAccount' {
-            Write-Information "Account property(s) required to update: $($propertiesChanged.Name -join ', ')"
+            Write-Information "Account property(s) required to update: $($propertiesChanged1.Name -join ', '), $($propertiesChanged2.Name -join ', ')"
 
             # Make sure to test with special characters and if needed; add utf8 encoding.
             if (-not($actionContext.DryRun -eq $true)) {
@@ -157,14 +163,18 @@ try {
 
                 $body = @{
                     PersonBaseData = @{}
+                    PersonTenantFreeFields = @{}
                 }
-                foreach ($property in $propertiesChanged) {
+                foreach ($property in $propertiesChanged1) {
                     $body.PersonBaseData["$($property.name)"] = $property.value
                 }
+                foreach ($property in $propertiesChanged2) {
+                    $body.PersonTenantFreeFields["$($property.name)"] = $property.value
+                }
                 $splatRestMethod = @{
-                    Uri     = "$($actionContext.Configuration.BaseUrl)/ExosApi/api/v1.0/persons/$($actionContext.References.Account))/Update"
+                    Uri     = "$($actionContext.Configuration.BaseUrl)/ExosApi/api/v1.0/persons/$($actionContext.References.Account)/Update"
                     Method  = 'Post'
-                    Headers = $Autorizationheaders
+                    Headers = $authorizationHeaders
                     body    = ($body | ConvertTo-Json -Depth 10)
                 }
                 $null = Invoke-RestMethod @splatRestMethod -Verbose:$false
@@ -176,7 +186,7 @@ try {
 
             $outputContext.Success = $true
             $outputContext.AuditLogs.Add([PSCustomObject]@{
-                    Message = "Update account was successful, Account property(s) updated: [$($propertiesChanged.name -join ',')]"
+                    Message = "Update account was successful, Account property(s) updated: [$($propertiesChanged1.Name -join ', '), $($propertiesChanged2.Name -join ', ')]"
                     IsError = $false
                 })
             break
@@ -221,4 +231,24 @@ catch {
             Message = $auditMessage
             IsError = $true
         })
+}
+finally {
+    if ($null -ne $authorizationHeaders) {
+        Write-Information 'logout'
+
+        $splatLogOut = @{
+            Uri         = "$($actionContext.Configuration.BaseUrl)/ExosApi/api/v1.0/logins/logoutMyself"
+            Method      = 'POST'
+            Headers     = $authorizationHeaders
+            Verbose     = $false
+        }
+
+        try {
+            $null = Invoke-RestMethod @splatLogOut
+            Write-Information "LogoutMyself succeeded"
+        }
+        catch {
+            Write-Information "Warning LogoutMyself failed, $($_.Exception.Message) $($_.ErrorDetails.message)".trim(' ')
+        }
+    }
 }

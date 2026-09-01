@@ -1,7 +1,7 @@
-#################################################
-# HelloID-Conn-Prov-Target-DormakabaExos-Enable
+##################################################
+# HelloID-Conn-Prov-Target-DormakabaExos-Delete
 # PowerShell V2
-#################################################
+##################################################
 
 # Enable TLS1.2
 [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor [System.Net.SecurityProtocolType]::Tls12
@@ -126,9 +126,8 @@ try {
     }
     $correlatedAccount = (Invoke-RestMethod @splatGetPersons -Verbose:$false).value[0]
 
-
     if ($null -ne $correlatedAccount) {
-        $action = 'EnableAccount'
+        $action = 'DisableAccount'
     }
     else {
         $action = 'NotFound'
@@ -136,11 +135,34 @@ try {
 
     # Process
     switch ($action) {
-        'EnableAccount' {
+        'DisableAccount' {
             if (-not($actionContext.DryRun -eq $true)) {
-                Write-Information "Enabling DormakabaExos account with accountReference: [$($actionContext.References.Account)]"
+
+                if ($actionContext.Origin -eq 'reconciliation') {
+                    # update the account, so the account can be filtered in the import, if the action is triggered by the reconciliation
+                    $body = @{
+                        PersonTenantFreeFields = @{
+                            Text50 = 'Deleted by HelloID '
+                        }
+                    }
+                }
+                else {
+                    $body = $actionContext.Data
+                }
+                
+                Write-Information "Updating DormakabaExos account with accountReference: [$($actionContext.References.Account)]"
                 $splatRestMethod = @{
-                    Uri     = "$($actionContext.Configuration.BaseUrl)/ExosApi/api/v1.0/persons/$($actionContext.References.Account)/unblock"
+                    Uri     = "$($actionContext.Configuration.BaseUrl)/ExosApi/api/v1.0/persons/$($actionContext.References.Account)/Update"
+                    Method  = 'Post'
+                    Headers = $authorizationHeaders
+                    body    = ($body | ConvertTo-Json -Depth 10)
+                }
+                $null = Invoke-RestMethod @splatRestMethod -Verbose:$false
+
+                Write-Information "Disabling DormakabaExos account with accountReference: [$($actionContext.References.Account)]"
+
+                $splatRestMethod = @{
+                    Uri     = "$($actionContext.Configuration.BaseUrl)/ExosApi/api/v1.0/persons/$($actionContext.References.Account)/block"
                     Method  = 'Post'
                     Headers = $authorizationHeaders
                     body    = @{ Reason = 'Automated HelloID Provisioning' } | ConvertTo-Json
@@ -149,34 +171,85 @@ try {
                     $null = Invoke-RestMethod @splatRestMethod -Verbose:$false
                 }
                 catch {
-                    if ($_.ErrorDetails.message -notmatch 'Person can not be unblocked as it has already been unblocked') {
+                    if ($_.ErrorDetails.message -notmatch 'Person can not be blocked as it has already been blocked') {
                         throw $_
+                    }
+                }
+
+                Write-Information 'Check the badges assigned to the account (if any), and unassign these'
+                $splatGetPersons = @{
+                    Uri     = "$($actionContext.Configuration.BaseUrl)/ExosApi/api/v1.0/persons?`$filter=(PersonBaseData/PersonId eq '$($actionContext.References.Account)')&`$expand=Badge(`$select=badgename)"
+                    Method  = 'GET'
+                    Headers = $authorizationHeaders
+                }
+                $responseUser = (Invoke-RestMethod @splatGetPersons -Verbose:$false).value[0]
+
+                if ($responseUser.Badge.badgeName.count -eq 0) {
+                    Write-information "No Badges were assigned to [$($actionContext.References.Account)]"
+                }
+                else {
+                    if (-not($actionContext.DryRun -eq $true)) {
+                        foreach ($badge in $responseUser.Badge) {
+                            if ($actionContext.Configuration.blockBadge) {
+                                Write-Information "Blocking Badge [$($badge.BadgeName)]"
+
+                                $splatRestMethod = @{
+                                    Uri     = "$($actionContext.Configuration.BaseUrl)/ExosApi/api/v1.0/badges/block"
+                                    Method  = 'Post'
+                                    Headers = $authorizationHeaders
+                                    body    = @{ BadgeName = $badge.BadgeName } | ConvertTo-Json
+                                }
+                                $null = Invoke-RestMethod @splatRestMethod -Verbose:$false
+                                $outputContext.AuditLogs.Add([PSCustomObject]@{
+                                        Message = "Block Badge [$($badge.BadgeName)] was successful"
+                                        IsError = $false
+                                    })
+                            }
+
+                            if ($actionContext.Configuration.unassignBadge) {
+                                Write-Information "Unassigning Badge [$($badge.BadgeName)]"
+
+                                $splatRestMethod = @{
+                                    Uri     = "$($actionContext.Configuration.BaseUrl)/ExosApi/api/v1.0/persons/$($actionContext.References.Account)/unassignBadge"
+                                    Method  = 'Post'
+                                    Headers = $authorizationHeaders
+                                    body    = @{ BadgeName = $badge.BadgeName } | ConvertTo-Json
+                                }
+                                $null = Invoke-RestMethod @splatRestMethod -Verbose:$false
+                                $outputContext.AuditLogs.Add([PSCustomObject]@{
+                                        Message = "Unassign Badge [$($badge.BadgeName)] was successful"
+                                        IsError = $false
+                                    })
+                            }
+                        }
+                    }
+                    else {
+                        Write-Information "[DryRun] Unassign Badges from DormakabaExos account with accountReference: [$($actionContext.References.Account)], will be executed during enforcement"
                     }
                 }
             }
             else {
-                Write-Information "[DryRun] Enable DormakabaExos account with accountReference: [$($actionContext.References.Account)], will be executed during enforcement"
+                Write-Information "[DryRun] Disable DormakabaExos account with accountReference: [$($actionContext.References.Account)], will be executed during enforcement"
             }
 
             $outputContext.Success = $true
             $outputContext.AuditLogs.Add([PSCustomObject]@{
-                    Message = 'Enable account was successful'
+                    Message = "Disable account was successful. Action initiated by: [$($actionContext.Origin)]"
                     IsError = $false
                 })
             break
         }
 
         'NotFound' {
-            Write-Information "DormakabaExos account: [$($actionContext.References.Account)] could not be found, possibly indicating that it may have been deleted"
-            $outputContext.Success = $false
+            Write-Information "DormakabaExos account: [$($actionContext.References.Account)] could not be found, possibly indicating that it could be deleted"
+            $outputContext.Success = $true
             $outputContext.AuditLogs.Add([PSCustomObject]@{
-                    Message = "DormakabaExos account: [$($actionContext.References.Account)] could not be found, possibly indicating that it may have been deleted"
-                    IsError = $true
+                    Message = "DormakabaExos account: [$($actionContext.References.Account)] could not be found, possibly indicating that it could be deleted"
+                    IsError = $false
                 })
             break
         }
     }
-
 }
 catch {
     $outputContext.Success = $false
@@ -184,11 +257,11 @@ catch {
     if ($($ex.Exception.GetType().FullName -eq 'Microsoft.PowerShell.Commands.HttpResponseException') -or
         $($ex.Exception.GetType().FullName -eq 'System.Net.WebException')) {
         $errorObj = Resolve-DormakabaExosError -ErrorObject $ex
-        $auditMessage = "Could not enable DormakabaExos account. Error: $($errorObj.FriendlyMessage)"
+        $auditMessage = "Could not disable DormakabaExos account. Error: $($errorObj.FriendlyMessage)"
         Write-Warning "Error at Line '$($errorObj.ScriptLineNumber)': $($errorObj.Line). Error: $($errorObj.ErrorDetails)"
     }
     else {
-        $auditMessage = "Could not enable DormakabaExos account. Error: $($ex.Exception.Message)"
+        $auditMessage = "Could not disable DormakabaExos account. Error: $($_.Exception.Message)"
         Write-Warning "Error at Line '$($ex.InvocationInfo.ScriptLineNumber)': $($ex.InvocationInfo.Line). Error: $($ex.Exception.Message)"
     }
     $outputContext.AuditLogs.Add([PSCustomObject]@{
