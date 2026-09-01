@@ -12,75 +12,52 @@
 
 ## Table of contents
 
-- [HelloID-Conn-Prov-Target-DormakabaExos](#helloid-conn-prov-target-dormakabaexos)
+- [HelloID-Conn-Prov-Target-DormakabaExos](#helloid-conn-prov-target-DormakabaExos)
   - [Table of contents](#table-of-contents)
   - [Introduction](#introduction)
+  - [Supported features](#supported-features)
   - [Getting started](#getting-started)
-    - [Provisioning PowerShell V2 connector](#provisioning-powershell-v2-connector)
-      - [Correlation configuration](#correlation-configuration)
-      - [Field mapping](#field-mapping)
+    - [HelloID Icon URL](#helloid-icon-url)
+    - [Requirements](#requirements)
     - [Connection settings](#connection-settings)
-    - [Prerequisites](#prerequisites)
-    - [Remarks](#remarks)
-  - [Setup the connector](#setup-the-connector)
+    - [Correlation configuration](#correlation-configuration)
+    - [Field mapping](#field-mapping)
+    - [Account Reference](#account-reference)
+  - [Remarks](#remarks)
+  - [Development resources](#development-resources)
+    - [API endpoints](#api-endpoints)
+    - [API documentation](#api-documentation)
   - [Getting help](#getting-help)
   - [HelloID docs](#helloid-docs)
 
 ## Introduction
 
-_HelloID-Conn-Prov-Target-DormakabaExos_ is a _target_ connector. _DormakabaExos_ provides a set of REST API's that allow you to programmatically interact with its data. The HelloID connector uses the API endpoints listed in the table below.
+_HelloID-Conn-Prov-Target-DormakabaExos_ is a _target_ connector. _DormakabaExos_ provides a set of REST API's that allow you to programmatically interact with its data. 
 
-| Endpoint                                    | Description                            |
-| ------------------------------------------- | -------------------------------------- |
-| /ExosApi/api/v1.0/persons                   | get endpoint for the account           |
-| /ExosApi/api/v1.0/persons/create            | post endpoint for the account creation |
-| /ExosApi/api/v1.0/persons{personid}/update  | post endpoint for the account update   |
-| /ExosApi/api/v1.0/persons{personid}/block   | post endpoint for the account update   |
-| /ExosApi/api/v1.0/persons{personid}/unblock | post endpoint for the account update   |
+## Supported  features
 
-The following lifecycle actions are available:
+The following features are available:
 
-| Action      | Description                           |
-| ----------- | ------------------------------------- |
-| create.ps1  | PowerShell _create_ lifecycle action  |
-| disable.ps1 | PowerShell _disable_ lifecycle action |
-| enable.ps1  | PowerShell _enable_ lifecycle action  |
-| update.ps1  | PowerShell _update_ lifecycle action  |
-
-| Connection configuration and field mapping files
-| configuration.json                      | Default _configuration.json_              |
-| fieldMapping.json                       | Default _fieldMapping.json_               |
-
-
-There is no delete lifecycle action available
+| Feature                 | Supported | Actions  | Remarks   
+| ----------------------- | --------- | ---------- | ------------ |
+| **Account Lifecycle**   | ✅        | Create, Update, Enable, Disable  |  |
+| **Permissions**         | ✅        | Retrieve, Grant, Revoke  | Static  |
+| **Resources**           | ❌        | -  |  |
+| **Uniqueness**          | ❌        | - |  |
+| **Entitlement Import: Accounts**    | ✅ | -  |                                     |
+| **Entitlement Import: Permissions** | ✅  |  -  | Only available for AccessRights  |
+| **Governance Reconciliation Resolutions** | ❌ | Reconciliation [Governance Remarks](#governance-remarks) | |
 
 ## Getting started
 
-### Provisioning PowerShell V2 connector
+### HelloID Icon URL
+URL of the icon used for the HelloID Provisioning target system.
+```
+https://raw.githubusercontent.com/Tools4everBV/HelloID-Conn-Prov-Target-DormakabaExos/refs/heads/main/Icon.png
+```
 
-#### Correlation configuration
-
-The correlation configuration is used to specify which properties will be used to match an existing account within _DormakabaExos_ to a person in _HelloID_.
-
-To properly setup the correlation:
-
-1. Open the `Correlation` tab.
-
-2. Specify the following configuration:
-
-    | Setting                  | Value                             |
-    | ------------------------ | --------------------------------- |
-    | Enable correlation       | `True`                            |
-    | Person correlation field | `PersonContext.Person.ExternalId` |
-
-Correlation is done based on the: **PersonalNumber**  field in the PersonBaseData object of the person in
-
-> [!TIP]
-> _For more information on correlation, please refer to our correlation [documentation](https://docs.helloid.com/en/provisioning/target-systems/powershell-v2-target-systems/correlation.html) pages_.
-
-#### Field mapping
-
-The field mapping can be imported by using the _fieldMapping.json_ file.
+### Requirements
+- HelloID Agent installed with access to the application server.
 
 ### Connection settings
 
@@ -93,29 +70,73 @@ The following settings are required to connect to the API.
 | BaseUrl        | The URL to the API                                   | Yes       |
 | TenantId       | Default `0` or `1`. Contact DormakabaExos for advice | Yes       |
 | RequestChannel | Default `0`. Contact DormakabaExos for advice        | Yes       |
+| BlockBadge     | Default `true`. Contact DormakabaExos for advice     | No        |
+| UnassignBadge  | Default `false`. Contact DormakabaExos for advice    | No        |
+
+> [!IMPORTANT]
+> - Make sure to limit the Concurrent Actions to **1**. This is **required** because there is a maximum number of simultaneous login sessions.
+>- Run on a local agent server with access to the Application Server.
+
+### Correlation configuration
+
+The correlation configuration is used to specify which properties will be used to match an existing account within _DormakabaExos_ to a person in _HelloID_.
+
+To properly setup the correlation:
+
+1. Open the `Correlation` tab.
+
+2. Specify the following configuration:
+
+    | Setting                  | Value                             |
+    | ------------------------ | --------------------------------- |
+    | Enable correlation       | `True`                            |
+    | Person correlation field | `Person.ExternalId`               |
+    | Account correlation field | `PersonBaseData.PersonalNumber`  |
 
 
-- Make sure to limit the Concurrent Actions to one. Required because there is a maximum number of simultaneous login sessions.
-- Run on a local agent server with access to the Application Server.
+> [!TIP]
+> _For more information on correlation, please refer to our correlation [documentation](https://docs.helloid.com/en/provisioning/target-systems/powershell-v2-target-systems/correlation.html) pages_.
 
-### Prerequisites
- -HelloID Agent installed with access to the application server.
+### Field mapping
 
-### Remarks
+The field mapping can be imported by using the _fieldMapping.json_ file.
+
+### Account Reference
+
+The account reference is populated with the property `PersonBaseData.PersonId` property from _DormakabaExos_
+
+## Remarks
 
 - The webservice does not support creating disabled accounts. An additional web call is required to disable/block the created accounts. The created accounts are disabled afterward. The accounts that are correlated will not be disabled. (This can be changed of course)
+- There is no delete event implemented. If the account is deleted history is also purged in DormakabaExos
 
-## Setup the connector
+## Development resources
 
-> _How to setup the connector in HelloID._ Are special settings required. Like the _primary manager_ settings for a source connector.
+### API endpoints
+
+The HelloID connector uses the API endpoints listed in the table below.
+
+| Endpoint                                    | HTTP Method |      Description                            |
+| ------------------------------------------- | -----------|-------------------------------------- |
+| /persons                   | GET | endpoint for the account           |
+| /persons/create            | POST | endpoint for the account creation |
+| /persons{personid}/update  | POST | endpoint for the account update   |
+| /persons{personid}/block   | POST | endpoint for the account disable  |
+| /persons{personid}/unblock | POST | endpoint for the account enable   |
+| /persons{personid}/assignAccessRight | POST | endpoint for assigning accessright   |
+| /persons{personid}/unassignAccessRight | POST | endpoint for unassigning accessright |
+| /accessRights | GET | endpoint list of accessrights |
+| /badges/block | POST | endpoint to block badge |
+| /persons{personid}/unassignBadge | POST | endpoint to unassign badge   |
+
+### API documentation
+Only available via the local DormakabaExos server. Example url: https://[servername]/exosapi/#!/person/get_v1_0_persons
+
 
 ## Getting help
 
 > [!TIP]
 > _For more information on how to configure a HelloID PowerShell connector, please refer to our [documentation](https://docs.helloid.com/en/provisioning/target-systems/powershell-v2-target-systems.html) pages_.
-
-> [!TIP]
->  _If you need help, feel free to ask questions on our [forum](https://forum.helloid.com)_.
 
 ## HelloID docs
 

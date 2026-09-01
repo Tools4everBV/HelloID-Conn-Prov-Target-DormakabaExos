@@ -113,7 +113,7 @@ try {
         RequestChannel = $actionContext.Configuration.RequestChannel
     }
 
-    $AutorizationHeaders = Get-AuthorizationHeaders @splatAuthHeaders
+    $authorizationHeaders = Get-AuthorizationHeaders @splatAuthHeaders
 
     # Validate correlation configuration
     if ($actionContext.CorrelationConfiguration.Enabled) {
@@ -131,10 +131,9 @@ try {
         $splatGetPersons = @{
             Uri     = "$($actionContext.Configuration.BaseUrl)/ExosApi/api/v1.0/persons?`$filter=(PersonBaseData/PersonalNumber eq '$correlationValue')&`$expand=PersonBaseData(`$select=*)"
             Method  = 'GET'
-            Headers = $AutorizationHeaders
+            Headers = $authorizationHeaders
         }
         $correlatedAccount = (Invoke-RestMethod @splatGetPersons -Verbose:$false).value[0]
-
     }
 
     if ($null -ne $correlatedAccount) {
@@ -150,7 +149,7 @@ try {
             $splatCreateParams = @{
                 Uri     = "$($actionContext.Configuration.BaseUrl)/ExosApi/api/v1.0/persons/Create"
                 Method  = 'POST'
-                Headers = $AutorizationHeaders
+                Headers = $authorizationHeaders
                 Body    = $actionContext.Data | ConvertTo-Json
             }
 
@@ -160,32 +159,35 @@ try {
 
                 $createdAccount = Invoke-RestMethod @splatCreateParams -Verbose:$false
                 $outputContext.Data = $createdAccount.Value
-                $outputContext.AccountReference = $createdAccount.Value.PersonId
+                if ($null -eq $createdAccount.Value.PersonId) {
+                    throw 'DormakabaExos account creation failed. No account was created.'
+                }
+                else {
+                    Write-Information "DormakabaExos account creation was successful. AccountReference is: [$($createdAccount.Value.PersonId)]"
+                    $outputContext.AccountReference = $createdAccount.Value.PersonId
+                }
 
-                # The API does not supports creating disabled accounts
-
+                # The API does not support creating disabled accounts
                 $splatRestMethodDisable = @{
                     Uri     = "$($actionContext.Configuration.BaseUrl)/ExosApi/api/v1.0/persons/$($outputContext.AccountReference)/block"
-                    Method  = 'Post'
-                    Headers = $AutorizationHeaders
+                    Method  = 'POST'
+                    Headers = $authorizationHeaders
                     body    = @{ Reason = 'Automated HelloID Provisioning' } | ConvertTo-Json
                 }
                 try {
                     $null = Invoke-RestMethod @splatRestMethodDisable -Verbose:$false
+                    $auditLogMessage = "Create account was successful. AccountReference is: [$($outputContext.AccountReference)]"
                 }
                 catch {
                     if ($_.ErrorDetails.message -notmatch 'Person can not be blocked as it has already been blocked') {
                         throw $_
                     }
                 }
-                break
-
-
             }
             else {
                 Write-Information '[DryRun] Create and correlate DormakabaExos account, will be executed during enforcement'
+                $auditLogMessage = "[DryRun] Create and correlate DormakabaExos account, will be executed during enforcement"
             }
-            $auditLogMessage = "Create account was successful. AccountReference is: [$($outputContext.AccountReference)]"
             break
         }
 
@@ -224,4 +226,24 @@ catch {
             Message = $auditMessage
             IsError = $true
         })
+}
+finally {
+    if ($null -ne $authorizationHeaders) {
+        Write-Information 'logout'
+
+        $splatLogOut = @{
+            Uri         = "$($actionContext.Configuration.BaseUrl)/ExosApi/api/v1.0/logins/logoutMyself"
+            Method      = 'POST'
+            Headers     = $authorizationHeaders
+            Verbose     = $false
+        }
+
+        try {
+            $null = Invoke-RestMethod @splatLogOut
+            Write-Information "LogoutMyself succeeded"
+        }
+        catch {
+            Write-Information "Warning LogoutMyself failed, $($_.Exception.Message) $($_.ErrorDetails.message)".trim(' ')
+        }
+    }
 }
