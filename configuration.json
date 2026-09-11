@@ -52,10 +52,30 @@
   },
   {
     "defaultValue": false,
+    "key": "unassignBadgeAtDisable",
+    "templateOptions": {
+      "description": "",
+      "label": "Unassign the badge from the person if in the disable event. If toggled off, then unassigning badge will be executed at delete event.",
+      "required": false
+    },
+    "type": "checkbox"
+  },
+  {
+    "defaultValue": false,
     "key": "unassignBadge",
     "templateOptions": {
       "description": "",
-      "label": "Unassign the badge from the person",
+      "label": "Unassign the badge from the person if the person is disabled or deleted",
+      "required": false
+    },
+    "type": "checkbox"
+  },
+  {
+    "defaultValue": true,
+    "key": "blockBadgeAtDisable",
+    "templateOptions": {
+      "description": "",
+      "label": "Block the badge assigned to the person if in the disable event. If toggled off, then blocking the badge will be executed at delete event.",
       "required": false
     },
     "type": "checkbox"
@@ -65,7 +85,7 @@
     "key": "blockBadge",
     "templateOptions": {
       "description": "",
-      "label": "Block the badge assigned to the person",
+      "label": "Block the badge assigned to the person if the person is disabled or deleted",
       "required": false
     },
     "type": "checkbox"

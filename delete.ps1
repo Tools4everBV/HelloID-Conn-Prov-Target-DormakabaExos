@@ -16,7 +16,7 @@ function Get-AuthorizationHeaders {
         $Username,
 
         [Parameter(Mandatory)]
-        [string]
+        [System.Security.SecureString]
         $Password,
 
         [Parameter(Mandatory)]
@@ -37,7 +37,7 @@ function Get-AuthorizationHeaders {
             tenantId       = $TenantId
             requestChannel = $RequestChannel
             userName       = $Username
-            password       = $Password
+            password       = [System.Net.NetworkCredential]::new('', $Password).Password
         }
 
         $splatRestMethod = @{
@@ -90,8 +90,12 @@ function Resolve-DormakabaExosError {
         try {
             $errorDetailsObject = ($httpErrorObj.ErrorDetails | ConvertFrom-Json)
             # Make sure to inspect the error result object and add only the error message as a FriendlyMessage.
-            # $httpErrorObj.FriendlyMessage = $errorDetailsObject.message
-            $httpErrorObj.FriendlyMessage = $httpErrorObj.ErrorDetails # Temporarily assignment
+            if ($null -ne $errorDetailsObject.message){
+                $httpErrorObj.FriendlyMessage = $errorDetailsObject.message
+            } 
+            else {
+                $httpErrorObj.FriendlyMessage = $httpErrorObj.ErrorDetails # Temporarily assignment
+            } 
         }
         catch {
             $httpErrorObj.FriendlyMessage = $httpErrorObj.ErrorDetails
@@ -111,7 +115,7 @@ try {
 
     $splatAuthHeaders = @{
         Username       = $actionContext.Configuration.UserName
-        Password       = $actionContext.Configuration.Password
+        Password       = ConvertTo-SecureString -String $actionContext.Configuration.Password -AsPlainText -Force
         BaseUrl        = $actionContext.Configuration.BaseUrl
         TenantId       = $actionContext.Configuration.TenantId
         RequestChannel = $actionContext.Configuration.RequestChannel
@@ -136,37 +140,41 @@ try {
     # Process
     switch ($action) {
         'DisableAccount' {
-            if (-not($actionContext.DryRun -eq $true)) {
-
-                if ($actionContext.Origin -eq 'reconciliation') {
-                    # update the account, so the account can be filtered in the import, if the action is triggered by the reconciliation
-                    $body = @{
-                        PersonTenantFreeFields = @{
-                            Text50 = 'Deleted by HelloID '
-                        }
+            if ($actionContext.Origin -eq 'reconciliation') {
+                # update the account, so the account can be filtered in the import, if the action is triggered by the reconciliation
+                $body = @{
+                    PersonTenantFreeFields = @{
+                        Text50 = 'Deleted by HelloID '
                     }
                 }
-                else {
-                    $body = $actionContext.Data
-                }
-                
-                Write-Information "Updating DormakabaExos account with accountReference: [$($actionContext.References.Account)]"
-                $splatRestMethod = @{
-                    Uri     = "$($actionContext.Configuration.BaseUrl)/ExosApi/api/v1.0/persons/$($actionContext.References.Account)/Update"
-                    Method  = 'Post'
-                    Headers = $authorizationHeaders
-                    body    = ($body | ConvertTo-Json -Depth 10)
-                }
+            }
+            else {
+                $body = $actionContext.Data
+            }
+            
+            Write-Information "Updating DormakabaExos account with accountReference: [$($actionContext.References.Account)]"
+            $splatRestMethod = @{
+                Uri     = "$($actionContext.Configuration.BaseUrl)/ExosApi/api/v1.0/persons/$($actionContext.References.Account)/Update"
+                Method  = 'Post'
+                Headers = $authorizationHeaders
+                body    = ($body | ConvertTo-Json -Depth 10)
+            }
+            if (-not($actionContext.DryRun -eq $true)) {
                 $null = Invoke-RestMethod @splatRestMethod -Verbose:$false
+            }
+            else {
+                Write-Information "[DryRun] Updating DormakabaExos account with accountReference: [$($actionContext.References.Account)], will be executed during enforcement"
+            }
 
-                Write-Information "Disabling DormakabaExos account with accountReference: [$($actionContext.References.Account)]"
+            Write-Information "Disabling DormakabaExos account with accountReference: [$($actionContext.References.Account)]"
 
-                $splatRestMethod = @{
-                    Uri     = "$($actionContext.Configuration.BaseUrl)/ExosApi/api/v1.0/persons/$($actionContext.References.Account)/block"
-                    Method  = 'Post'
-                    Headers = $authorizationHeaders
-                    body    = @{ Reason = 'Automated HelloID Provisioning' } | ConvertTo-Json
-                }
+            $splatRestMethod = @{
+                Uri     = "$($actionContext.Configuration.BaseUrl)/ExosApi/api/v1.0/persons/$($actionContext.References.Account)/block"
+                Method  = 'Post'
+                Headers = $authorizationHeaders
+                body    = @{ Reason = 'Automated HelloID Provisioning' } | ConvertTo-Json
+            }
+            if (-not($actionContext.DryRun -eq $true)) {
                 try {
                     $null = Invoke-RestMethod @splatRestMethod -Verbose:$false
                 }
@@ -175,63 +183,68 @@ try {
                         throw $_
                     }
                 }
-
-                Write-Information 'Check the badges assigned to the account (if any), and unassign these'
-                $splatGetPersons = @{
-                    Uri     = "$($actionContext.Configuration.BaseUrl)/ExosApi/api/v1.0/persons?`$filter=(PersonBaseData/PersonId eq '$($actionContext.References.Account)')&`$expand=Badge(`$select=badgename)"
-                    Method  = 'GET'
-                    Headers = $authorizationHeaders
-                }
-                $responseUser = (Invoke-RestMethod @splatGetPersons -Verbose:$false).value[0]
-
-                if ($responseUser.Badge.badgeName.count -eq 0) {
-                    Write-information "No Badges were assigned to [$($actionContext.References.Account)]"
-                }
-                else {
-                    if (-not($actionContext.DryRun -eq $true)) {
-                        foreach ($badge in $responseUser.Badge) {
-                            if ($actionContext.Configuration.blockBadge) {
-                                Write-Information "Blocking Badge [$($badge.BadgeName)]"
-
-                                $splatRestMethod = @{
-                                    Uri     = "$($actionContext.Configuration.BaseUrl)/ExosApi/api/v1.0/badges/block"
-                                    Method  = 'Post'
-                                    Headers = $authorizationHeaders
-                                    body    = @{ BadgeName = $badge.BadgeName } | ConvertTo-Json
-                                }
-                                $null = Invoke-RestMethod @splatRestMethod -Verbose:$false
-                                $outputContext.AuditLogs.Add([PSCustomObject]@{
-                                        Message = "Block Badge [$($badge.BadgeName)] was successful"
-                                        IsError = $false
-                                    })
-                            }
-
-                            if ($actionContext.Configuration.unassignBadge) {
-                                Write-Information "Unassigning Badge [$($badge.BadgeName)]"
-
-                                $splatRestMethod = @{
-                                    Uri     = "$($actionContext.Configuration.BaseUrl)/ExosApi/api/v1.0/persons/$($actionContext.References.Account)/unassignBadge"
-                                    Method  = 'Post'
-                                    Headers = $authorizationHeaders
-                                    body    = @{ BadgeName = $badge.BadgeName } | ConvertTo-Json
-                                }
-                                $null = Invoke-RestMethod @splatRestMethod -Verbose:$false
-                                $outputContext.AuditLogs.Add([PSCustomObject]@{
-                                        Message = "Unassign Badge [$($badge.BadgeName)] was successful"
-                                        IsError = $false
-                                    })
-                            }
-                        }
-                    }
-                    else {
-                        Write-Information "[DryRun] Unassign Badges from DormakabaExos account with accountReference: [$($actionContext.References.Account)], will be executed during enforcement"
-                    }
-                }
             }
             else {
-                Write-Information "[DryRun] Disable DormakabaExos account with accountReference: [$($actionContext.References.Account)], will be executed during enforcement"
+                Write-Information "[DryRun] Disabling DormakabaExos account with accountReference: [$($actionContext.References.Account)], will be executed during enforcement"
             }
 
+            Write-Information 'Check the badges assigned to the account (if any), and unassign these'
+            $splatGetPersons = @{
+                Uri     = "$($actionContext.Configuration.BaseUrl)/ExosApi/api/v1.0/persons?`$filter=(PersonBaseData/PersonId eq '$($actionContext.References.Account)')&`$expand=Badge(`$select=badgename)"
+                Method  = 'GET'
+                Headers = $authorizationHeaders
+            }
+            $responseUser = (Invoke-RestMethod @splatGetPersons -Verbose:$false).value[0]
+
+            if ($responseUser.Badge.badgeName.count -eq 0) {
+                Write-information "No Badges were assigned to [$($actionContext.References.Account)]"
+            }
+            else {
+                foreach ($badge in $responseUser.Badge) {
+                    if ($actionContext.Configuration.blockBadge -and -not($actionContext.Configuration.blockBadgeAtDisable)) {
+                        Write-Information "Blocking Badge [$($badge.BadgeName)]"
+
+                        $splatRestMethod = @{
+                            Uri     = "$($actionContext.Configuration.BaseUrl)/ExosApi/api/v1.0/badges/block"
+                            Method  = 'Post'
+                            Headers = $authorizationHeaders
+                            body    = @{ BadgeName = $badge.BadgeName } | ConvertTo-Json
+                        }
+                        if (-not($actionContext.DryRun -eq $true)) {
+                            $null = Invoke-RestMethod @splatRestMethod -Verbose:$false
+                            $outputContext.AuditLogs.Add([PSCustomObject]@{
+                                    Message = "Block Badge [$($badge.BadgeName)] was successful"
+                                    IsError = $false
+                                })
+                        }
+                        else {
+                            Write-Information "[DryRun] Block Badge [$($badge.BadgeName)] will be executed during enforcement"
+                        }
+                    }
+
+                    if ($actionContext.Configuration.unassignBadge -and -not($actionContext.Configuration.unassignBadgeAtDisable)) {
+                        Write-Information "Unassigning Badge [$($badge.BadgeName)]"
+
+                        $splatRestMethod = @{
+                            Uri     = "$($actionContext.Configuration.BaseUrl)/ExosApi/api/v1.0/persons/$($actionContext.References.Account)/unassignBadge"
+                            Method  = 'Post'
+                            Headers = $authorizationHeaders
+                            body    = @{ BadgeName = $badge.BadgeName } | ConvertTo-Json
+                        }
+                        if (-not($actionContext.DryRun -eq $true)) {
+                            $null = Invoke-RestMethod @splatRestMethod -Verbose:$false
+                            $outputContext.AuditLogs.Add([PSCustomObject]@{
+                                    Message = "Unassign Badge [$($badge.BadgeName)] was successful"
+                                    IsError = $false
+                                })
+                        }
+                        else {
+                            Write-Information "[DryRun] Unassign Badge [$($badge.BadgeName)] will be executed during enforcement"
+                        }
+                    }
+                }
+            }
+            
             $outputContext.Success = $true
             $outputContext.AuditLogs.Add([PSCustomObject]@{
                     Message = "Disable account was successful. Action initiated by: [$($actionContext.Origin)]"

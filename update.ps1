@@ -15,7 +15,7 @@ function Get-AuthorizationHeaders {
         $Username,
 
         [Parameter(Mandatory)]
-        [string]
+        [System.Security.SecureString]
         $Password,
 
         [Parameter(Mandatory)]
@@ -36,7 +36,7 @@ function Get-AuthorizationHeaders {
             tenantId       = $TenantId
             requestChannel = $RequestChannel
             userName       = $Username
-            password       = $Password
+            password       = [System.Net.NetworkCredential]::new('', $Password).Password
         }
 
         $splatRestMethod = @{
@@ -90,8 +90,12 @@ function Resolve-DormakabaExosError {
         try {
             $errorDetailsObject = ($httpErrorObj.ErrorDetails | ConvertFrom-Json)
             # Make sure to inspect the error result object and add only the error message as a FriendlyMessage.
-            # $httpErrorObj.FriendlyMessage = $errorDetailsObject.message
-            $httpErrorObj.FriendlyMessage = $httpErrorObj.ErrorDetails # Temporarily assignment
+            if ($null -ne $errorDetailsObject.message){
+                $httpErrorObj.FriendlyMessage = $errorDetailsObject.message
+            } 
+            else {
+                $httpErrorObj.FriendlyMessage = $httpErrorObj.ErrorDetails # Temporarily assignment
+            } 
         }
         catch {
             $httpErrorObj.FriendlyMessage = $httpErrorObj.ErrorDetails
@@ -111,7 +115,7 @@ try {
 
     $splatAuthHeaders = @{
         Username       = $actionContext.Configuration.UserName
-        Password       = $actionContext.Configuration.Password
+        Password       = ConvertTo-SecureString -String $actionContext.Configuration.Password -AsPlainText -Force
         BaseUrl        = $actionContext.Configuration.BaseUrl
         TenantId       = $actionContext.Configuration.TenantId
         RequestChannel = $actionContext.Configuration.RequestChannel
@@ -134,14 +138,14 @@ try {
             ReferenceObject  = @($correlatedAccount.PersonBaseData.PSObject.Properties)
             DifferenceObject = @($actionContext.Data.PersonBaseData.PSObject.Properties)
         }
-        $propertiesChanged1 = Compare-Object @splatCompareProperties -PassThru | Where-Object { $_.SideIndicator -eq '=>' }
+        $propertiesChanged = Compare-Object @splatCompareProperties -PassThru | Where-Object { $_.SideIndicator -eq '=>' }
         
         $splatComparePropertiesFreeFields = @{
             ReferenceObject  = @($correlatedAccount.PersonTenantFreeFields.PSObject.Properties)
             DifferenceObject = @($actionContext.Data.PersonTenantFreeFields.PSObject.Properties)
         }
-        $propertiesChanged2 = Compare-Object @splatComparePropertiesFreeFields -PassThru | Where-Object { $_.SideIndicator -eq '=>' }
-        if ($propertiesChanged1.Count -gt 0 -or $propertiesChanged2.Count -gt 0) {
+        $propertiesChangedFreeField = Compare-Object @splatComparePropertiesFreeFields -PassThru | Where-Object { $_.SideIndicator -eq '=>' }
+        if ($propertiesChanged.Count -gt 0 -or $propertiesChangedFreeField.Count -gt 0) {
             $action = 'UpdateAccount'
         }
         else {
@@ -155,7 +159,7 @@ try {
     # Process
     switch ($action) {
         'UpdateAccount' {
-            Write-Information "Account property(s) required to update: $($propertiesChanged1.Name -join ', '), $($propertiesChanged2.Name -join ', ')"
+            Write-Information "Account property(s) required to update: $($propertiesChanged.Name -join ', '), $($propertiesChangedFreeField.Name -join ', ')"
 
             # Make sure to test with special characters and if needed; add utf8 encoding.
             if (-not($actionContext.DryRun -eq $true)) {
@@ -165,10 +169,10 @@ try {
                     PersonBaseData = @{}
                     PersonTenantFreeFields = @{}
                 }
-                foreach ($property in $propertiesChanged1) {
+                foreach ($property in $propertiesChanged) {
                     $body.PersonBaseData["$($property.name)"] = $property.value
                 }
-                foreach ($property in $propertiesChanged2) {
+                foreach ($property in $propertiesChangedFreeField) {
                     $body.PersonTenantFreeFields["$($property.name)"] = $property.value
                 }
                 $splatRestMethod = @{

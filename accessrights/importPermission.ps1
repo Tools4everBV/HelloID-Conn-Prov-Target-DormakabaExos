@@ -15,7 +15,7 @@ function Get-AuthorizationHeaders {
         $Username,
 
         [Parameter(Mandatory)]
-        [string]
+        [System.Security.SecureString]
         $Password,
 
         [Parameter(Mandatory)]
@@ -36,7 +36,7 @@ function Get-AuthorizationHeaders {
             tenantId       = $TenantId
             requestChannel = $RequestChannel
             userName       = $Username
-            password       = $Password
+            password       = [System.Net.NetworkCredential]::new('', $Password).Password
         }
 
         $splatRestMethod = @{
@@ -90,8 +90,12 @@ function Resolve-DormakabaExosError {
         try {
             $errorDetailsObject = ($httpErrorObj.ErrorDetails | ConvertFrom-Json)
             # Make sure to inspect the error result object and add only the error message as a FriendlyMessage.
-            # $httpErrorObj.FriendlyMessage = $errorDetailsObject.message
-            $httpErrorObj.FriendlyMessage = $httpErrorObj.ErrorDetails # Temporarily assignment
+            if ($null -ne $errorDetailsObject.message){
+                $httpErrorObj.FriendlyMessage = $errorDetailsObject.message
+            } 
+            else {
+                $httpErrorObj.FriendlyMessage = $httpErrorObj.ErrorDetails # Temporarily assignment
+            } 
         }
         catch {
             $httpErrorObj.FriendlyMessage = $httpErrorObj.ErrorDetails
@@ -106,7 +110,7 @@ try {
 
     $splatAuthHeaders = @{
         Username       = $actionContext.Configuration.UserName
-        Password       = $actionContext.Configuration.Password
+        Password       = ConvertTo-SecureString -String $actionContext.Configuration.Password -AsPlainText -Force
         BaseUrl        = $actionContext.Configuration.BaseUrl
         TenantId       = $actionContext.Configuration.TenantId
         RequestChannel = $actionContext.Configuration.RequestChannel
@@ -127,7 +131,7 @@ try {
             foreach ($importedAccount in $response.value) {
                 if ($null -eq $importedAccount.PersonAccessControlData -or 
                     $null -eq $importedAccount.PersonAccessControlData.accessRights) {
-                    Write-Warning "Skipping account with missing PersonAccessControlData or accessRights"
+                    Write-Warning "Skipping account [$($importedAccount.PersonBaseData.PersonId)] with missing PersonAccessControlData or accessRights"
                     continue
                 }
                 $accessRights = $importedAccount.PersonAccessControlData.accessRights
@@ -135,7 +139,7 @@ try {
                 foreach ($accessRight in $accessRights) {
                     if ($null -eq $accessRight.AccessRightId -or 
                         $null -eq $importedAccount.PersonBaseData.PersonId) {
-                        Write-Warning "Skipping access right with missing data"
+                        Write-Warning "Skipping access right for account [$($importedAccount.PersonBaseData.PersonId)] with missing data"
                         continue
                     }
                     Write-Output @(

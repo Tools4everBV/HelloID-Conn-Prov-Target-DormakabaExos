@@ -3,7 +3,7 @@
   "MappingFields": [
     {
       "Name": "PersonBaseData.PersonalNumber",
-      "Description": "",
+      "Description": "Used for correlation",
       "Type": "Text",
       "MappingActions": [
         {
@@ -88,7 +88,7 @@
     },
     {
       "Name": "PersonTenantFreeFields.Text50",
-      "Description": "",
+      "Description": "Used for filtering in reconciliation",
       "Type": "Text",
       "MappingActions": [
         {

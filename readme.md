@@ -40,13 +40,13 @@ The following features are available:
 
 | Feature                 | Supported | Actions  | Remarks   
 | ----------------------- | --------- | ---------- | ------------ |
-| **Account Lifecycle**   | ✅        | Create, Update, Enable, Disable  |  |
+| **Account Lifecycle**   | ✅        | Create, Update, Enable, Disable, Delete  | Delete event does `NOT` delete the account |
 | **Permissions**         | ✅        | Retrieve, Grant, Revoke  | Static  |
 | **Resources**           | ❌        | -  |  |
 | **Uniqueness**          | ❌        | - |  |
 | **Entitlement Import: Accounts**    | ✅ | -  |                                     |
 | **Entitlement Import: Permissions** | ✅  |  -  | Only available for AccessRights  |
-| **Governance Reconciliation Resolutions** | ❌ | Reconciliation [Governance Remarks](#governance-remarks) | |
+| **Governance Reconciliation Resolutions** | ❌ | Reconciliation [Governance Remarks](#governance-remarks) | Delete is treated as a disable action with the option to update values. Please adjust the configuration accordingly in the delete script. |
 
 ## Getting started
 
@@ -108,7 +108,8 @@ The account reference is populated with the property `PersonBaseData.PersonId` p
 ## Remarks
 
 - The webservice does not support creating disabled accounts. An additional web call is required to disable/block the created accounts. The created accounts are disabled afterward. The accounts that are correlated will not be disabled. (This can be changed of course)
-- There is no delete event implemented. If the account is deleted history is also purged in DormakabaExos
+- The delete event does `NOT` delete the account. We do the disable of the account in the delete event. If the account is deleted history is also purged in DormakabaExos.
+- PersonTenantFreeFields.Text50 is used to mark the account as deleted by HelloID. This is done to be able to filter out those accounts in the import script (for reconciliation). 
 
 ## Development resources
 
