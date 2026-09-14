@@ -45,8 +45,8 @@ The following features are available:
 | **Resources**           | ❌        | -  |  |
 | **Uniqueness**          | ❌        | - |  |
 | **Entitlement Import: Accounts**    | ✅ | -  |                                     |
-| **Entitlement Import: Permissions** | ✅  |  -  | Only available for AccessRights  |
-| **Governance Reconciliation Resolutions** | ❌ | Reconciliation [Governance Remarks](#governance-remarks) | Delete is treated as a disable action with the option to update values. Please adjust the configuration accordingly in the delete script. |
+| **Entitlement Import: Permissions** | ✅  |  -  | Only available for AccessRights (Profile)  |
+| **Governance Reconciliation Resolutions** | ✅ | Reconciliation [Governance Remarks](#governance-remarks) | Delete is treated as a disable action with the option to update values. Please adjust the configuration accordingly in the delete script. |
 
 ## Getting started
 
@@ -100,6 +100,7 @@ To properly setup the correlation:
 ### Field mapping
 
 The field mapping can be imported by using the _fieldMapping.json_ file.
+Make sure the freefields are mapped correctly if they are in scope of the project.  
 
 ### Account Reference
 

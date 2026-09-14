@@ -139,12 +139,16 @@ try {
             DifferenceObject = @($actionContext.Data.PersonBaseData.PSObject.Properties)
         }
         $propertiesChanged = Compare-Object @splatCompareProperties -PassThru | Where-Object { $_.SideIndicator -eq '=>' }
-        
-        $splatComparePropertiesFreeFields = @{
-            ReferenceObject  = @($correlatedAccount.PersonTenantFreeFields.PSObject.Properties)
-            DifferenceObject = @($actionContext.Data.PersonTenantFreeFields.PSObject.Properties)
+
+        $propertiesChangedFreeField = @()
+        if ($null -ne $actionContext.Data.PersonTenantFreeFields) {
+            $splatComparePropertiesFreeFields = @{
+                ReferenceObject  = @($correlatedAccount.PersonTenantFreeFields.PSObject.Properties)
+                DifferenceObject = @($actionContext.Data.PersonTenantFreeFields.PSObject.Properties)
+            }
+            $propertiesChangedFreeField = Compare-Object @splatComparePropertiesFreeFields -PassThru | Where-Object { $_.SideIndicator -eq '=>' }
         }
-        $propertiesChangedFreeField = Compare-Object @splatComparePropertiesFreeFields -PassThru | Where-Object { $_.SideIndicator -eq '=>' }
+        
         if ($propertiesChanged.Count -gt 0 -or $propertiesChangedFreeField.Count -gt 0) {
             $action = 'UpdateAccount'
         }
@@ -165,15 +169,17 @@ try {
             if (-not($actionContext.DryRun -eq $true)) {
                 Write-Information "Updating DormakabaExos account with accountReference: [$($actionContext.References.Account)]"
 
-                $body = @{
-                    PersonBaseData = @{}
-                    PersonTenantFreeFields = @{}
-                }
+                $body = @{}
+                $body['PersonBaseData'] = @{}
                 foreach ($property in $propertiesChanged) {
                     $body.PersonBaseData["$($property.name)"] = $property.value
                 }
-                foreach ($property in $propertiesChangedFreeField) {
-                    $body.PersonTenantFreeFields["$($property.name)"] = $property.value
+                
+                if ($propertiesChangedFreeField.Count -gt 0) {
+                    $body['PersonTenantFreeFields'] = @{}
+                    foreach ($property in $propertiesChangedFreeField) {
+                        $body.PersonTenantFreeFields["$($property.name)"] = $property.value
+                    }
                 }
                 $splatRestMethod = @{
                     Uri     = "$($actionContext.Configuration.BaseUrl)/ExosApi/api/v1.0/persons/$($actionContext.References.Account)/Update"
@@ -182,7 +188,6 @@ try {
                     body    = ($body | ConvertTo-Json -Depth 10)
                 }
                 $null = Invoke-RestMethod @splatRestMethod -Verbose:$false
-
             }
             else {
                 Write-Information "[DryRun] Update DormakabaExos account with accountReference: [$($actionContext.References.Account)], will be executed during enforcement"
@@ -190,7 +195,7 @@ try {
 
             $outputContext.Success = $true
             $outputContext.AuditLogs.Add([PSCustomObject]@{
-                    Message = "Update account was successful, Account property(s) updated: [$($propertiesChanged1.Name -join ', '), $($propertiesChanged2.Name -join ', ')]"
+                    Message = "Update account was successful, Account property(s) updated: [$($propertiesChanged.Name -join ', '), $($propertiesChangedFreeField.Name -join ', ')]"
                     IsError = $false
                 })
             break
