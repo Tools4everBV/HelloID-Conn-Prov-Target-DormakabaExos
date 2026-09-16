@@ -185,7 +185,7 @@ try {
                     Uri     = "$($actionContext.Configuration.BaseUrl)/ExosApi/api/v1.0/persons/$($actionContext.References.Account)/Update"
                     Method  = 'Post'
                     Headers = $authorizationHeaders
-                    body    = ($body | ConvertTo-Json -Depth 10)
+                    body    = [System.Text.Encoding]::UTF8.GetBytes($($body | ConvertTo-Json -Depth 10))
                 }
                 $null = Invoke-RestMethod @splatRestMethod -Verbose:$false
             }

@@ -63,15 +63,17 @@ https://raw.githubusercontent.com/Tools4everBV/HelloID-Conn-Prov-Target-Dormakab
 
 The following settings are required to connect to the API.
 
-| Setting        | Description                                          | Mandatory |
-| -------------- | ---------------------------------------------------- | --------- |
-| UserName       | The UserName to connect to the API                   | Yes       |
-| Password       | The Password to connect to the API                   | Yes       |
-| BaseUrl        | The URL to the API                                   | Yes       |
-| TenantId       | Default `0` or `1`. Contact DormakabaExos for advice | Yes       |
-| RequestChannel | Default `0`. Contact DormakabaExos for advice        | Yes       |
-| BlockBadge     | Default `true`. Contact DormakabaExos for advice     | No        |
-| UnassignBadge  | Default `false`. Contact DormakabaExos for advice    | No        |
+| Setting                 | Description                                          | Mandatory |
+| --------------          | ---------------------------------------------------- | --------- |
+| UserName                | The UserName to connect to the API                   | Yes       |
+| Password                | The Password to connect to the API                   | Yes       |
+| BaseUrl                 | The URL to the API                                   | Yes       |
+| TenantId                | Default `0` or `1`. Contact DormakabaExos for advice | Yes       |
+| RequestChannel          | Default `0`. Contact DormakabaExos for advice        | Yes       |
+| BlockBadge              | Default `true`. Contact DormakabaExos for advice     | No        |
+| BlockBadgeAtDisable     | Default `true`. Contact DormakabaExos for advice     | No        |
+| UnassignBadge           | Default `false`. Contact DormakabaExos for advice    | No        |
+| UnassignBadgeAtDisable  | Default `true`. Contact DormakabaExos for advice     | No        |
 
 > [!IMPORTANT]
 > - Make sure to limit the Concurrent Actions to **1**. This is **required** because there is a maximum number of simultaneous login sessions.

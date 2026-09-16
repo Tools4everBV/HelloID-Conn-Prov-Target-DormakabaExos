@@ -154,7 +154,7 @@ try {
                 Uri     = "$($actionContext.Configuration.BaseUrl)/ExosApi/api/v1.0/persons/Create"
                 Method  = 'POST'
                 Headers = $authorizationHeaders
-                Body    = $actionContext.Data | ConvertTo-Json
+                Body    = [System.Text.Encoding]::UTF8.GetBytes($($actionContext.Data | ConvertTo-Json))
             }
 
             # Make sure to test with special characters and if needed; add utf8 encoding.

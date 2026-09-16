@@ -55,7 +55,7 @@
     "key": "unassignBadgeAtDisable",
     "templateOptions": {
       "description": "",
-      "label": "Unassign the badge from the person if in the disable event. If toggled off, then unassigning badge will be executed at delete event.",
+      "label": "Toggle off to unassign the badge at delete event, toggle on to unassign at disable event.",
       "required": false
     },
     "type": "checkbox"
@@ -75,7 +75,7 @@
     "key": "blockBadgeAtDisable",
     "templateOptions": {
       "description": "",
-      "label": "Block the badge assigned to the person if in the disable event. If toggled off, then blocking the badge will be executed at delete event.",
+      "label": "Toggle off to block the badge at delete event, toggle on to block the badge at disable event.",
       "required": false
     },
     "type": "checkbox"

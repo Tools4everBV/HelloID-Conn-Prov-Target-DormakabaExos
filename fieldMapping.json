@@ -70,6 +70,23 @@
       ]
     },
     {
+      "Name": "PersonTenantFreeFields.Date2",
+      "Description": "",
+      "Type": "Text",
+      "MappingActions": [
+        {
+          "MapForActions": [
+            "Create",
+            "Update"
+          ],
+          "MappingMode": "Complex",
+          "Value": "\"function convertDate(date) {\\r\\n    const day = String(date.getDate()).padStart(2, '0');\\r\\n    const month = String(date.getMonth() + 1).padStart(2, '0');\\r\\n    const year = date.getFullYear();\\r\\n    // const hour = date.getHours();\\r\\n    // const minute = date.getMinutes();\\r\\n    // const second = date.getSeconds();\\r\\n\\r\\n    return `${year}-${month}-${day}T00:00:00.000`;\\r\\n}\\r\\n\\r\\nfunction getFormattedEndDate() {\\r\\n    const endDate = Person.PrimaryContract.EndDate;\\r\\n    if (!endDate) return null;\\r\\n\\r\\n    const date = new Date(endDate);\\r\\n    return isNaN(date) ? null : convertDate(date);\\r\\n}\\r\\n\\r\\ngetFormattedEndDate();\"",
+          "UsedInNotifications": false,
+          "StoreInAccountData": false
+        }
+      ]
+    },
+    {
       "Name": "PersonTenantFreeFields.Text1",
       "Description": "",
       "Type": "Text",

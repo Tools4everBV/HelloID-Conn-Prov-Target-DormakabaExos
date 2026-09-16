@@ -6,13 +6,15 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Added
 - support for custom fields in account object
-- support for accessrights as permissions
+- support for accessrights (profile) as permissions
 - import scripts
 - disable & delete event support for block badge and unassign badge (configuration)
+- examples in field mapping for freefields (text & date)
 
 ### Fixed
 - Typos in variables, comments and logging
 - logout functionality in finally
+- diacritical marks in json body
 
 ## [1.1.0] - 27-10-2025
 
