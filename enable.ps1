@@ -16,7 +16,7 @@ function Get-AuthorizationHeaders {
         $Username,
 
         [Parameter(Mandatory)]
-        [string]
+        [System.Security.SecureString]
         $Password,
 
         [Parameter(Mandatory)]
@@ -37,7 +37,7 @@ function Get-AuthorizationHeaders {
             tenantId       = $TenantId
             requestChannel = $RequestChannel
             userName       = $Username
-            password       = $Password
+            password       = [System.Net.NetworkCredential]::new('', $Password).Password
         }
 
         $splatRestMethod = @{
@@ -90,8 +90,12 @@ function Resolve-DormakabaExosError {
         try {
             $errorDetailsObject = ($httpErrorObj.ErrorDetails | ConvertFrom-Json)
             # Make sure to inspect the error result object and add only the error message as a FriendlyMessage.
-            # $httpErrorObj.FriendlyMessage = $errorDetailsObject.message
-            $httpErrorObj.FriendlyMessage = $httpErrorObj.ErrorDetails # Temporarily assignment
+            if ($null -ne $errorDetailsObject.message){
+                $httpErrorObj.FriendlyMessage = $errorDetailsObject.message
+            } 
+            else {
+                $httpErrorObj.FriendlyMessage = $httpErrorObj.ErrorDetails # Temporarily assignment
+            } 
         }
         catch {
             $httpErrorObj.FriendlyMessage = $httpErrorObj.ErrorDetails
@@ -111,18 +115,18 @@ try {
 
     $splatAuthHeaders = @{
         Username       = $actionContext.Configuration.UserName
-        Password       = $actionContext.Configuration.Password
+        Password       = ConvertTo-SecureString -String $actionContext.Configuration.Password -AsPlainText -Force
         BaseUrl        = $actionContext.Configuration.BaseUrl
         TenantId       = $actionContext.Configuration.TenantId
         RequestChannel = $actionContext.Configuration.RequestChannel
     }
 
-    $Autorizationheaders = Get-AuthorizationHeaders @splatAuthHeaders
+    $authorizationHeaders = Get-AuthorizationHeaders @splatAuthHeaders
 
     $splatGetPersons = @{
         Uri     = "$($actionContext.Configuration.BaseUrl)/ExosApi/api/v1.0/persons?`$filter=(PersonBaseData/PersonId eq '$($actionContext.References.Account)')"
         Method  = 'GET'
-        Headers = $Autorizationheaders
+        Headers = $authorizationHeaders
     }
     $correlatedAccount = (Invoke-RestMethod @splatGetPersons -Verbose:$false).value[0]
 
@@ -142,8 +146,8 @@ try {
                 $splatRestMethod = @{
                     Uri     = "$($actionContext.Configuration.BaseUrl)/ExosApi/api/v1.0/persons/$($actionContext.References.Account)/unblock"
                     Method  = 'Post'
-                    Headers = $Autorizationheaders
-                    body    = @{ Reason = 'Automated HelloId Provisioing' } | ConvertTo-Json
+                    Headers = $authorizationHeaders
+                    body    = @{ Reason = 'Automated HelloID Provisioning' } | ConvertTo-Json
                 }
                 try {
                     $null = Invoke-RestMethod @splatRestMethod -Verbose:$false
@@ -179,7 +183,7 @@ try {
 
 }
 catch {
-    $outputContext.success = $false
+    $outputContext.Success = $false
     $ex = $PSItem
     if ($($ex.Exception.GetType().FullName -eq 'Microsoft.PowerShell.Commands.HttpResponseException') -or
         $($ex.Exception.GetType().FullName -eq 'System.Net.WebException')) {
@@ -188,11 +192,31 @@ catch {
         Write-Warning "Error at Line '$($errorObj.ScriptLineNumber)': $($errorObj.Line). Error: $($errorObj.ErrorDetails)"
     }
     else {
-        $auditMessage = "Could not enable DormakabaExos account. Error: $($_.Exception.Message)"
+        $auditMessage = "Could not enable DormakabaExos account. Error: $($ex.Exception.Message)"
         Write-Warning "Error at Line '$($ex.InvocationInfo.ScriptLineNumber)': $($ex.InvocationInfo.Line). Error: $($ex.Exception.Message)"
     }
     $outputContext.AuditLogs.Add([PSCustomObject]@{
             Message = $auditMessage
             IsError = $true
         })
+}
+finally {
+    if ($null -ne $authorizationHeaders) {
+        Write-Information 'logout'
+
+        $splatLogOut = @{
+            Uri         = "$($actionContext.Configuration.BaseUrl)/ExosApi/api/v1.0/logins/logoutMyself"
+            Method      = 'POST'
+            Headers     = $authorizationHeaders
+            Verbose     = $false
+        }
+
+        try {
+            $null = Invoke-RestMethod @splatLogOut
+            Write-Information "LogoutMyself succeeded"
+        }
+        catch {
+            Write-Information "Warning LogoutMyself failed, $($_.Exception.Message) $($_.ErrorDetails.message)".trim(' ')
+        }
+    }
 }

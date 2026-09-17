@@ -1,5 +1,5 @@
 #################################################
-# HelloID-Conn-Prov-Target-DormakabaExos-Create
+# HelloID-Conn-Prov-Target-DormakabaExos-Import
 # PowerShell V2
 #################################################
 
@@ -106,9 +106,8 @@ function Resolve-DormakabaExosError {
 #endregion
 
 try {
-    # Initial Assignments
-    $outputContext.AccountReference = 'Currently not available'
-
+    Write-Information 'Starting DormakabaExos account entitlement import'
+    
     $splatAuthHeaders = @{
         Username       = $actionContext.Configuration.UserName
         Password       = ConvertTo-SecureString -String $actionContext.Configuration.Password -AsPlainText -Force
@@ -119,117 +118,71 @@ try {
 
     $authorizationHeaders = Get-AuthorizationHeaders @splatAuthHeaders
 
-    # Validate correlation configuration
-    if ($actionContext.CorrelationConfiguration.Enabled) {
-        $correlationField = $actionContext.CorrelationConfiguration.Personfield
-        $correlationValue = $actionContext.CorrelationConfiguration.PersonFieldValue
-
-        if ([string]::IsNullOrEmpty($($correlationField))) {
-            throw 'Correlation is enabled but not configured correctly'
-        }
-        if ([string]::IsNullOrEmpty($($correlationValue))) {
-            throw 'Correlation is enabled but [PersonFieldValue] is empty. Please make sure it is correctly mapped'
-        }
-
-        # Determine if a user needs to be [created] or [correlated]
-        $splatGetPersons = @{
-            Uri     = "$($actionContext.Configuration.BaseUrl)/ExosApi/api/v1.0/persons?`$filter=(PersonBaseData/PersonalNumber eq '$correlationValue')&`$expand=PersonBaseData(`$select=*)"
+    $pageSize = 100
+    $pageNumber = 0
+    do {
+        $splatImportAccountParams = @{
+            Uri     = "$($actionContext.Configuration.BaseUrl)/ExosApi/api/v1.0/persons?skip=$($pageNumber)&top=$($pageSize)&`$expand=PersonBaseData,PersonBaseData(`$expand=PersonLoginData(`$select=*)),PersonAccessControlData,PersonTenantFreeFields"
             Method  = 'GET'
             Headers = $authorizationHeaders
         }
-        $correlatedAccount = (Invoke-RestMethod @splatGetPersons -Verbose:$false).value[0]
-    }
 
-    if ($null -ne $correlatedAccount) {
-        $action = 'CorrelateAccount'
-    }
-    else {
-        $action = 'CreateAccount'
-    }
-
-    # Process
-    switch ($action) {
-        'CreateAccount' {
-            $splatCreateParams = @{
-                Uri     = "$($actionContext.Configuration.BaseUrl)/ExosApi/api/v1.0/persons/Create"
-                Method  = 'POST'
-                Headers = $authorizationHeaders
-                Body    = [System.Text.Encoding]::UTF8.GetBytes($($actionContext.Data | ConvertTo-Json))
-            }
-
-            # Make sure to test with special characters and if needed; add utf8 encoding.
-            if (-not($actionContext.DryRun -eq $true)) {
-                Write-Information 'Creating and correlating DormakabaExos account'
-
-                $createdAccount = Invoke-RestMethod @splatCreateParams -Verbose:$false
-                $outputContext.Data = $createdAccount.Value
-                if ($null -eq $createdAccount.Value.PersonId) {
-                    throw 'DormakabaExos account creation failed. No account was created.'
-                }
-                else {
-                    Write-Information "DormakabaExos account creation was successful. AccountReference is: [$($createdAccount.Value.PersonId)]"
-                    $outputContext.AccountReference = $createdAccount.Value.PersonId
+        $response = Invoke-RestMethod @splatImportAccountParams
+        # Write-Information $($response | ConvertTo-Json)
+        if ($null -ne $response.value -and $response.value.Count -gt 0) {
+            foreach ($importedAccount in $response.value) {
+                if ($null -eq $importedAccount.PersonBaseData) {
+                    Write-Warning "Skipping account with missing PersonBaseData"
+                    continue
                 }
 
-                # The API does not support creating disabled accounts
-                $splatRestMethodDisable = @{
-                    Uri     = "$($actionContext.Configuration.BaseUrl)/ExosApi/api/v1.0/persons/$($outputContext.AccountReference)/block"
-                    Method  = 'POST'
-                    Headers = $authorizationHeaders
-                    body    = @{ Reason = 'Automated HelloID Provisioning' } | ConvertTo-Json
+                # Make sure the displayName has a value
+                $displayName = "$($importedAccount.PersonBaseData.firstName) $($importedAccount.PersonBaseData.lastName)".trim()
+                if ([string]::IsNullOrEmpty($displayName)) {
+                    $displayName = $importedAccount.PersonBaseData.PersonalNumber
                 }
-                try {
-                    $null = Invoke-RestMethod @splatRestMethodDisable -Verbose:$false
-                    $auditLogMessage = "Create account was successful. AccountReference is: [$($outputContext.AccountReference)]"
-                }
-                catch {
-                    if ($_.ErrorDetails.message -notmatch 'Person can not be blocked as it has already been blocked') {
-                        throw $_
+
+                # Make sure the userName has a value
+                $username = "$($importedAccount.PersonBaseData.PersonLoginData.userName)"
+                if ([string]::IsNullOrWhiteSpace($importedAccount.PersonBaseData.PersonLoginData.userName)) {
+                    if ([string]::IsNullOrWhiteSpace($importedAccount.PersonBaseData.PersonalNumber)) {
+                        $username = "$($importedAccount.PersonBaseData.PersonId)"
+                    }
+                    else {
+                        $username = "$($importedAccount.PersonBaseData.PersonalNumber)"
                     }
                 }
+
+                if ($importedAccount.PersonTenantFreeFields.Text50 -eq 'Deleted by HelloID ') {
+                    Write-Warning "Account [$($importedAccount.PersonBaseData.PersonId)] is 'Deleted by HelloID '. Skipping import of this account."
+                    continue
+                }
+                Write-Output @{
+                    AccountReference = $importedAccount.PersonBaseData.PersonId
+                    DisplayName      = $displayName
+                    UserName         = $username
+                    Enabled          = -not $importedAccount.PersonAccessControlData.isBlocked
+                    Data             = $importedAccount
+                }
             }
-            else {
-                Write-Information '[DryRun] Create and correlate DormakabaExos account, will be executed during enforcement'
-                $auditLogMessage = "[DryRun] Create and correlate DormakabaExos account, will be executed during enforcement"
-            }
-            break
         }
+        $pageNumber = $pageNumber + $pageSize
+    } while ($pageSize -eq $response.value.Count )
 
-        'CorrelateAccount' {
-            Write-Information 'Correlating DormakabaExos account'
-
-            $outputContext.Data = $correlatedAccount
-            $outputContext.AccountReference = $correlatedAccount.PersonBaseData.PersonId
-            $outputContext.AccountCorrelated = $true
-            $auditLogMessage = "Correlated account: [$($outputContext.AccountReference)] on field: [$($correlationField)] with value: [$($correlationValue)]"
-            break
-        }
-    }
-
-    $outputContext.success = $true
-    $outputContext.AuditLogs.Add([PSCustomObject]@{
-            Action  = $action
-            Message = $auditLogMessage
-            IsError = $false
-        })
+    Write-Information 'DormakabaExos account entitlement import completed'
 }
 catch {
-    $outputContext.success = $false
     $ex = $PSItem
     if ($($ex.Exception.GetType().FullName -eq 'Microsoft.PowerShell.Commands.HttpResponseException') -or
         $($ex.Exception.GetType().FullName -eq 'System.Net.WebException')) {
         $errorObj = Resolve-DormakabaExosError -ErrorObject $ex
-        $auditMessage = "Could not create or correlate DormakabaExos account. Error: $($errorObj.FriendlyMessage)"
         Write-Warning "Error at Line '$($errorObj.ScriptLineNumber)': $($errorObj.Line). Error: $($errorObj.ErrorDetails)"
+        Write-Error "Could not import DormakabaExos account entitlements. Error: $($errorObj.FriendlyMessage)"
     }
     else {
-        $auditMessage = "Could not create or correlate DormakabaExos account. Error: $($ex.Exception.Message)"
         Write-Warning "Error at Line '$($ex.InvocationInfo.ScriptLineNumber)': $($ex.InvocationInfo.Line). Error: $($ex.Exception.Message)"
+        Write-Error "Could not import DormakabaExos account entitlements. Error: $($ex.Exception.Message)"
     }
-    $outputContext.AuditLogs.Add([PSCustomObject]@{
-            Message = $auditMessage
-            IsError = $true
-        })
 }
 finally {
     if ($null -ne $authorizationHeaders) {

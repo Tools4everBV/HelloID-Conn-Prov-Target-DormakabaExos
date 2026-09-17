@@ -1,5 +1,5 @@
 ##################################################
-# HelloID-Conn-Prov-Target-DormakabaExos-Disable
+# HelloID-Conn-Prov-Target-DormakabaExos-Delete
 # PowerShell V2
 ##################################################
 
@@ -140,6 +140,32 @@ try {
     # Process
     switch ($action) {
         'DisableAccount' {
+            if ($actionContext.Origin -eq 'reconciliation') {
+                # update the account, so the account can be filtered in the import, if the action is triggered by the reconciliation
+                $body = @{
+                    PersonTenantFreeFields = @{
+                        Text50 = 'Deleted by HelloID '
+                    }
+                }
+            }
+            else {
+                $body = $actionContext.Data
+            }
+            
+            Write-Information "Updating DormakabaExos account with accountReference: [$($actionContext.References.Account)]"
+            $splatRestMethod = @{
+                Uri     = "$($actionContext.Configuration.BaseUrl)/ExosApi/api/v1.0/persons/$($actionContext.References.Account)/Update"
+                Method  = 'Post'
+                Headers = $authorizationHeaders
+                body    = ($body | ConvertTo-Json -Depth 10)
+            }
+            if (-not($actionContext.DryRun -eq $true)) {
+                $null = Invoke-RestMethod @splatRestMethod -Verbose:$false
+            }
+            else {
+                Write-Information "[DryRun] Updating DormakabaExos account with accountReference: [$($actionContext.References.Account)], will be executed during enforcement"
+            }
+
             Write-Information "Disabling DormakabaExos account with accountReference: [$($actionContext.References.Account)]"
 
             $splatRestMethod = @{
@@ -175,7 +201,7 @@ try {
             }
             else {
                 foreach ($badge in $responseUser.Badge) {
-                    if ($actionContext.Configuration.blockBadge -and $actionContext.Configuration.blockBadgeAtDisable) {
+                    if ($actionContext.Configuration.blockBadge -and -not($actionContext.Configuration.blockBadgeAtDisable)) {
                         Write-Information "Blocking Badge [$($badge.BadgeName)]"
 
                         $splatRestMethod = @{
@@ -196,7 +222,7 @@ try {
                         }
                     }
 
-                    if ($actionContext.Configuration.unassignBadge -and $actionContext.Configuration.unassignBadgeAtDisable) {
+                    if ($actionContext.Configuration.unassignBadge -and -not($actionContext.Configuration.unassignBadgeAtDisable)) {
                         Write-Information "Unassigning Badge [$($badge.BadgeName)]"
 
                         $splatRestMethod = @{
@@ -218,7 +244,7 @@ try {
                     }
                 }
             }
-
+            
             $outputContext.Success = $true
             $outputContext.AuditLogs.Add([PSCustomObject]@{
                     Message = "Disable account was successful. Action initiated by: [$($actionContext.Origin)]"
@@ -244,26 +270,17 @@ catch {
     if ($($ex.Exception.GetType().FullName -eq 'Microsoft.PowerShell.Commands.HttpResponseException') -or
         $($ex.Exception.GetType().FullName -eq 'System.Net.WebException')) {
         $errorObj = Resolve-DormakabaExosError -ErrorObject $ex
-        $auditLogMessage = "Could not disable DormakabaExos account. Error: $($errorObj.FriendlyMessage)"
+        $auditMessage = "Could not disable DormakabaExos account. Error: $($errorObj.FriendlyMessage)"
         Write-Warning "Error at Line '$($errorObj.ScriptLineNumber)': $($errorObj.Line). Error: $($errorObj.ErrorDetails)"
     }
     else {
-        $auditLogMessage = "Could not disable DormakabaExos account. Error: $($_.Exception.Message)"
+        $auditMessage = "Could not disable DormakabaExos account. Error: $($_.Exception.Message)"
         Write-Warning "Error at Line '$($ex.InvocationInfo.ScriptLineNumber)': $($ex.InvocationInfo.Line). Error: $($ex.Exception.Message)"
     }
-    if ($auditLogMessage -like "*Person can not be blocked as it has already been blocked*") {
-        $outputContext.AuditLogs.Add([PSCustomObject]@{
-            Message = $auditLogMessage
-            IsError = $false
-        })
-        $outputContext.Success = $true
-    }
-    else {
-        $outputContext.AuditLogs.Add([PSCustomObject]@{
-            Message = $auditLogMessage
+    $outputContext.AuditLogs.Add([PSCustomObject]@{
+            Message = $auditMessage
             IsError = $true
         })
-    }
 }
 finally {
     if ($null -ne $authorizationHeaders) {
